@@ -1,12 +1,30 @@
 import os
-from dotenv import load_dotenv
+import yaml
+from pydantic import BaseSettings
 
 # data 디렉터리 자동 생성
 os.makedirs("data/models", exist_ok=True)
 os.makedirs("data/index", exist_ok=True)
 os.makedirs("data/logs", exist_ok=True)
 
-load_dotenv()
+class Settings(BaseSettings):
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+    # 예시 필드
+    project_name: str = "open-codeai"
+    version: str = "1.0.0"
+    environment: str = "development"
+    debug: bool = True
+
+    @classmethod
+    def from_yaml(cls, path: str = "configs/config.yaml"):
+        with open(path, "r") as f:
+            data = yaml.safe_load(f)
+        return cls(**data.get("project", {}))
+
+settings = Settings.from_yaml()
 
 class Settings:
     PROJECT_NAME: str = os.getenv("PROJECT_NAME", "Open CodeAI")

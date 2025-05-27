@@ -1,0 +1,122 @@
+# Open CodeAI 메인 설정
+project:
+  name: "open-codeai"
+  version: "1.0.0"
+  max_files: 10000
+  supported_extensions:
+    - ".py"
+    - ".js"
+    - ".ts"
+    - ".java"
+    - ".cpp"
+    - ".c"
+    - ".go"
+    - ".rs"
+    - ".php"
+    - ".rb"
+    - ".scala"
+    - ".kt"
+
+# 서버 설정
+server:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  reload: false
+  log_level: "INFO"
+  
+# LLM 설정
+llm:
+  main_model:
+    name: "qwen2.5-coder-32b"
+    path: "./data/models/qwen2.5-coder-32b"
+    context_window: 32768
+    max_tokens: 4096
+    temperature: 0.1
+    gpu_memory_fraction: 0.7
+    use_vllm: true
+    
+  embedding_model:
+    name: "bge-large-en-v1.5"
+    path: "./data/models/bge-large-en-v1.5"
+    dimension: 1024
+    batch_size: 64
+    device: "cuda"
+    
+  graph_analysis_model:
+    name: "codet5-small"
+    path: "./data/models/codet5-small"
+    enable: true
+
+# 데이터베이스 설정
+database:
+  vector:
+    type: "faiss"
+    path: "./data/vector_index"
+    index_type: "HNSW"
+    ef_construction: 200
+    ef_search: 50
+    memory_limit_gb: 16
+    
+  graph:
+    type: "neo4j"  # 또는 "networkx"
+    path: "./data/graph_db"
+    memory_limit_gb: 8
+    enable_persistence: true
+    
+  metadata:
+    type: "sqlite"
+    path: "./data/metadata/opencodeai.db"
+    connection_pool_size: 20
+    timeout: 30
+
+# 인덱싱 설정
+indexing:
+  strategy: "hybrid"  # semantic, fixed, hybrid
+  chunk_size: 1000
+  chunk_overlap: 200
+  min_chunk_size: 100
+  parallel_workers: 16
+  batch_size: 100
+  memory_per_worker_gb: 4
+  
+# 성능 최적화
+performance:
+  cache:
+    enable: true
+    size_gb: 10
+    ttl_seconds: 3600
+    
+  memory:
+    max_usage_percent: 80
+    gc_threshold_percent: 70
+    
+  gpu:
+    enable: true
+    memory_fraction: 0.8
+    mixed_precision: true
+
+# 모니터링 설정
+monitoring:
+  file_watcher:
+    enable: true
+    debounce_seconds: 1.0
+    batch_updates: true
+    
+  metrics:
+    enable: true
+    collection_interval: 60
+    retention_days: 30
+
+# Continue.dev 통합
+continue_integration:
+  enabled: true
+  connection_type: "websocket"
+  port: 8001
+  auth_token: "open-codeai-secure-token"
+  features:
+    chat: true
+    autocomplete: true
+    code_review: true
+    refactoring: true
+    function_calling: true 

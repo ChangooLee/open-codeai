@@ -1,0 +1,33 @@
+version: '3.8'
+services:
+  api:
+    build: .
+    container_name: open-codeai-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - neo4j
+  neo4j:
+    image: neo4j:5.15
+    container_name: open-codeai-neo4j
+    ports:
+      - "7687:7687"
+      - "7474:7474"
+    environment:
+      - NEO4J_AUTH=neo4j/opencodeai
+    volumes:
+      - ./data/graph_db:/data
+  continue:
+    image: continuedev/continue:latest
+    container_name: open-codeai-continue
+    ports:
+      - "8001:8001"
+    environment:
+      - CONTINUE_PORT=8001
+      - CONTINUE_AUTH_TOKEN=open-codeai-secure-token
+    depends_on:
+      - api 

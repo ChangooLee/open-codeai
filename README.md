@@ -465,7 +465,7 @@ python scripts/optimize_indices.py --aggressive
 python scripts/cleanup_memory.py
 
 # 성능 튜닝 (하드웨어 기반 자동 조정)
-python scripts/auto_tune.py --hardware-profile server
+python scripts/auto_tune.py --hardware_profile server
 ```
 
 ## 🚨 문제 해결

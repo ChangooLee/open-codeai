@@ -20,4 +20,6 @@ def reindex_project(project_path: str) -> Dict:
     return {
         "project_path": project_path,
         "status": "reindex started"
-    } 
+    }
+
+# 프로젝트 관리 API 엔드포인트 스텁 
