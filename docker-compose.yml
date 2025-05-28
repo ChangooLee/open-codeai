@@ -1,33 +1,161 @@
 version: '3.8'
+
 services:
+  # Open CodeAI 메인 API 서버
   api:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: open-codeai-api
     ports:
       - "8000:8000"
     env_file:
-      - .env.example
+      - .env
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+      # 프로젝트 코드 마운트 (인덱싱용)
+      - ${PROJECT_PATH:-./}:/workspace:ro
     depends_on:
       - neo4j
+      - redis
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=opencodeai
+      - REDIS_URL=redis://redis:6379
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Neo4j 그래프 데이터베이스
   neo4j:
-    image: neo4j:5.15
+    image: neo4j:5.15-community
     container_name: open-codeai-neo4j
     ports:
-      - "7687:7687"
-      - "7474:7474"
+      - "7474:7474"  # Web UI
+      - "7687:7687"  # Bolt protocol
     environment:
       - NEO4J_AUTH=neo4j/opencodeai
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_memory_heap_initial_size=1G
+      - NEO4J_dbms_memory_heap_max_size=2G
+      - NEO4J_dbms_memory_pagecache_size=1G
     volumes:
-      - ./data/graph_db:/data
-  continue:
-    image: continuedev/continue:latest
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
+      - ./data/neo4j/plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "opencodeai", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Redis (캐싱 및 세션 관리)
+  redis:
+    image: redis:7-alpine
+    container_name: open-codeai-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Continue.dev 프록시/어댑터 (선택적)
+  continue-adapter:
+    build:
+      context: .
+      dockerfile: Dockerfile.continue
     container_name: open-codeai-continue
     ports:
       - "8001:8001"
     environment:
+      - API_BASE_URL=http://api:8000
       - CONTINUE_PORT=8001
       - CONTINUE_AUTH_TOKEN=open-codeai-secure-token
     depends_on:
-      - api 
+      - api
+    restart: unless-stopped
+
+  # 모니터링 및 메트릭 (선택적)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: open-codeai-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./data/prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  # 그라파나 대시보드 (선택적)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: open-codeai-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=opencodeai
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # 백업 서비스 (선택적)
+  backup:
+    build:
+      context: .
+      dockerfile: Dockerfile.backup
+    container_name: open-codeai-backup
+    volumes:
+      - ./data:/data:ro
+      - ./backups:/backups
+    environment:
+      - BACKUP_SCHEDULE=0 2 * * *  # 매일 새벽 2시
+      - RETENTION_DAYS=30
+    depends_on:
+      - neo4j
+      - redis
+    restart: unless-stopped
+
+# 볼륨 정의
+volumes:
+  neo4j-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+# 네트워크 정의
+networks:
+  default:
+    name: open-codeai-network
+    driver: bridge
