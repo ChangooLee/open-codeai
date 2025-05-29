@@ -11,6 +11,7 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
+from abc import ABC, abstractmethod
 
 # 더미 모드 가져오기
 try:
@@ -35,6 +36,105 @@ from ..utils.logger import get_logger, log_performance
 from ..utils.hardware import get_hardware_info, recommend_settings
 
 logger = get_logger(__name__)
+
+# LLMProvider 추상 클래스
+class BaseLLMProvider(ABC):
+    @abstractmethod
+    def load(self):
+        pass
+    @abstractmethod
+    def generate(self, prompt: str, max_tokens: int, temperature: float, stop_sequences: Optional[List[str]]) -> str:
+        pass
+    @abstractmethod
+    def device(self) -> str:
+        pass
+
+# HuggingFace Transformers Provider
+class HFProvider(BaseLLMProvider):
+    def __init__(self, model_path, model_type, quantize, device, max_tokens, temperature, tokenizer=None):
+        from transformers import AutoTokenizer, AutoModelForCausalLM, GenerationConfig, BitsAndBytesConfig
+        self.model_path = model_path
+        self.model_type = model_type
+        self.quantize = quantize
+        self.device = device
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.tokenizer = tokenizer
+        self.model = None
+        self.generation_config = None
+        self.torch = torch
+        self.GenerationConfig = GenerationConfig
+        self.BitsAndBytesConfig = BitsAndBytesConfig
+
+    def load(self):
+        # 토크나이저
+        if not self.tokenizer:
+            from transformers import AutoTokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True, use_fast=True)
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+        # 모델 로딩 옵션
+        model_kwargs = {"trust_remote_code": True}
+        if self.device == "cuda":
+            model_kwargs["torch_dtype"] = self.torch.float16
+            model_kwargs["device_map"] = "auto"
+        else:
+            model_kwargs["torch_dtype"] = self.torch.float32
+        # 양자화
+        if self.quantize == "4bit":
+            model_kwargs["quantization_config"] = self.BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=self.torch.float16, bnb_4bit_use_double_quant=True, bnb_4bit_quant_type="nf4")
+        elif self.quantize == "8bit":
+            model_kwargs["load_in_8bit"] = True
+        from transformers import AutoModelForCausalLM
+        self.model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
+        self.model.eval()
+        self.generation_config = self.GenerationConfig(
+            max_new_tokens=self.max_tokens,
+            temperature=self.temperature,
+            do_sample=True,
+            top_p=0.9,
+            top_k=50,
+            repetition_penalty=1.1,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+        )
+    def generate(self, prompt: str, max_tokens: int, temperature: float, stop_sequences: Optional[List[str]]) -> str:
+        # 동기 생성
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=min(len(prompt.split())*2, self.tokenizer.model_max_length - max_tokens)).to(self.device)
+        with self.torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                generation_config=self.generation_config,
+                pad_token_id=self.tokenizer.pad_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                max_new_tokens=max_tokens,
+                temperature=temperature
+            )
+        generated_text = self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
+        if stop_sequences:
+            for stop_seq in stop_sequences:
+                if stop_seq in generated_text:
+                    generated_text = generated_text.split(stop_seq)[0]
+                    break
+        return generated_text.strip()
+    def device(self) -> str:
+        return self.device
+
+# vLLM Provider (더미, 실제 vllm 연동 필요시 확장)
+class VLLMProvider(BaseLLMProvider):
+    def __init__(self, model_path, max_tokens, temperature):
+        self.model_path = model_path
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.model = None
+    def load(self):
+        # 실제 vllm 연동 필요 (여기서는 더미)
+        pass
+    def generate(self, prompt: str, max_tokens: int, temperature: float, stop_sequences: Optional[List[str]]) -> str:
+        # 실제 vllm 연동 필요 (여기서는 NotImplementedError)
+        raise NotImplementedError("vLLMProvider는 실제 vLLM 엔진 연동 필요")
+    def device(self) -> str:
+        return "cuda"
 
 class ModelNotLoadedException(Exception):
     """모델이 로드되지 않았을 때 발생하는 예외"""
@@ -84,6 +184,8 @@ class EnhancedLLMManager:
         
         # 비동기 초기화
         asyncio.create_task(self._initialize_system())
+        
+        self.llm_provider = None
     
     def _get_device(self) -> str:
         """최적 디바이스 결정"""
@@ -160,77 +262,27 @@ class EnhancedLLMManager:
             logger.error(f"실제 모델 초기화 실패: {e}")
             return False
     
-    @log_performance("main_model_loading")
     async def _load_main_model(self) -> bool:
-        """메인 LLM 모델 로딩"""
         model_path = settings.llm.main_model.path
-        
-        if not os.path.exists(model_path):
-            logger.warning(f"모델 경로를 찾을 수 없습니다: {model_path}")
-            return False
-        
+        model_type = getattr(settings.llm.main_model, 'type', 'qwen2.5-coder')
+        use_vllm = getattr(settings.llm.main_model, 'use_vllm', False)
+        quantize = getattr(settings.llm.main_model, 'quantize', 'none')
+        device = getattr(settings.llm.main_model, 'device', 'auto')
+        max_tokens = getattr(settings.llm.main_model, 'max_tokens', 4096)
+        temperature = getattr(settings.llm.main_model, 'temperature', 0.1)
+        # provider 선택
+        if use_vllm:
+            self.llm_provider = VLLMProvider(model_path, max_tokens, temperature)
+        else:
+            self.llm_provider = HFProvider(model_path, model_type, quantize, device, max_tokens, temperature)
         try:
-            logger.info(f"메인 모델 로딩 중: {model_path}")
-            
-            # 토크나이저 로딩
-            self.main_tokenizer = AutoTokenizer.from_pretrained(
-                model_path,
-                trust_remote_code=True,
-                use_fast=True
-            )
-            
-            if self.main_tokenizer.pad_token is None:
-                self.main_tokenizer.pad_token = self.main_tokenizer.eos_token
-            
-            # 모델 로딩 옵션 설정
-            model_kwargs = {
-                "trust_remote_code": True,
-                "torch_dtype": torch.float16 if self.device == "cuda" else torch.float32,
-                "device_map": "auto" if self.device == "cuda" else None,
-            }
-            
-            # GPU 메모리 최적화
-            if self.device == "cuda" and self.recommended_settings["gpu"]["memory_fraction"] < 1.0:
-                model_kwargs["max_memory"] = {
-                    0: f"{int(self.recommended_settings['memory_limit_gb'] * 0.8)}GB"
-                }
-            
-            # 양자화 설정
-            if self.device == "cuda" and self.hardware_info["gpu"]["devices"]:
-                gpu_memory = self.hardware_info["gpu"]["devices"][0]["memory_gb"]
-                if gpu_memory < 24:
-                    model_kwargs["quantization_config"] = BitsAndBytesConfig(
-                        load_in_4bit=True,
-                        bnb_4bit_compute_dtype=torch.float16,
-                        bnb_4bit_use_double_quant=True,
-                        bnb_4bit_quant_type="nf4"
-                    )
-            
-            # 모델 로딩
-            self.main_model = AutoModelForCausalLM.from_pretrained(
-                model_path,
-                **model_kwargs
-            )
-            
-            self.main_model.eval()
-            
-            # 생성 설정
-            self.generation_config = GenerationConfig(
-                max_new_tokens=settings.llm.main_model.max_tokens,
-                temperature=settings.llm.main_model.temperature,
-                do_sample=True,
-                top_p=0.9,
-                top_k=50,
-                repetition_penalty=1.1,
-                pad_token_id=self.main_tokenizer.pad_token_id,
-                eos_token_id=self.main_tokenizer.eos_token_id,
-            )
-            
-            logger.success(f"메인 모델 로딩 완료: {settings.llm.main_model.name}")
+            self.llm_provider.load()
+            self.main_model = self.llm_provider.model
+            self.main_tokenizer = getattr(self.llm_provider, 'tokenizer', None)
+            logger.success(f"LLMProvider({type(self.llm_provider).__name__}) 로딩 완료: {model_path}")
             return True
-            
         except Exception as e:
-            logger.error(f"메인 모델 로딩 실패: {e}")
+            logger.error(f"LLMProvider 로딩 실패: {e}")
             self.main_model = None
             self.main_tokenizer = None
             return False
@@ -377,6 +429,10 @@ class EnhancedLLMManager:
         stop_sequences: Optional[List[str]] = None
     ) -> str:
         """동기 텍스트 생성"""
+        
+        # provider가 있으면 provider로 위임
+        if self.llm_provider:
+            return self.llm_provider.generate(prompt, generation_config.max_new_tokens, generation_config.temperature, stop_sequences)
         
         with self.model_lock:
             try:

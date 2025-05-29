@@ -542,6 +542,25 @@ class GraphDatabase:
         elif self.graph:
             self.save_graph()
 
+    def add_call_relation(self, caller_id: str, callee_id: str):
+        """함수 간 CALLS 엣지 추가 (caller_id, callee_id는 'file_path::func_name' 형식)"""
+        try:
+            with self._lock:
+                if self.use_neo4j:
+                    with self.driver.session() as session:
+                        session.run(
+                            """
+                            MERGE (caller:Function {id: $caller_id})
+                            MERGE (callee:Function {id: $callee_id})
+                            MERGE (caller)-[:CALLS]->(callee)
+                            """,
+                            caller_id=caller_id, callee_id=callee_id
+                        )
+                else:
+                    self.graph.add_edge(caller_id, callee_id, relationship='calls')
+        except Exception as e:
+            logger.error(f"CALLS 엣지 추가 실패: {e}")
+
 class CodeIndexer:
     """코드 인덱싱 시스템"""
     
@@ -808,7 +827,7 @@ class CodeIndexer:
         return chunks
     
     async def _add_to_graph(self, file_path: str, analysis: CodeAnalysisResult):
-        """그래프 DB에 분석 결과 추가"""
+        """그래프 DB에 분석 결과 추가 (내부 import, 함수 호출 관계 포함)"""
         try:
             # 파일 노드 추가
             file_metadata = {
@@ -819,8 +838,9 @@ class CodeIndexer:
                 'last_modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
             }
             self.graph_db.add_file_node(file_path, file_metadata)
-            
-            # 함수 노드들 추가
+
+            # 함수 노드들 추가 및 함수명-노드ID 매핑
+            func_name_to_id = {}
             if analysis.functions:
                 for func in analysis.functions:
                     func_metadata = {
@@ -831,15 +851,37 @@ class CodeIndexer:
                         'is_async': func.is_async
                     }
                     self.graph_db.add_function_node(file_path, func.name, func_metadata)
-            
-            # 의존성 관계 추가
+                    func_name_to_id[func.name] = f"{file_path}::{func.name}"
+
+            # 내부/외부 의존성 관계 추가
             if analysis.imports:
                 for imp in analysis.imports:
-                    if imp.module and not imp.module.startswith('.'):
-                        # 외부 모듈 의존성은 간단히 처리
-                        dependency_path = f"module::{imp.module}"
-                        self.graph_db.add_dependency(file_path, dependency_path, 'import')
-            
+                    if imp.module:
+                        if imp.module.startswith('.') or imp.module.replace('.', '/') in file_path:
+                            # 내부 import: 모듈명을 파일 경로로 변환
+                            # 예: from .utils import X -> utils.py, from app.moduleY import Z -> app/moduleY.py
+                            base_dir = os.path.dirname(file_path)
+                            rel_path = imp.module.replace('.', '/') + '.py'
+                            internal_path = os.path.normpath(os.path.join(base_dir, rel_path))
+                            if os.path.exists(internal_path):
+                                self.graph_db.add_dependency(file_path, internal_path, 'import')
+                        else:
+                            # 외부 모듈 의존성
+                            dependency_path = f"module::{imp.module}"
+                            self.graph_db.add_dependency(file_path, dependency_path, 'import')
+
+            # 함수 호출(CALLS) 관계 추가
+            if analysis.functions:
+                for func in analysis.functions:
+                    caller_id = f"{file_path}::{func.name}"
+                    if func.calls:
+                        for callee_name in func.calls:
+                            # 같은 파일 내 함수 우선 연결
+                            if callee_name in func_name_to_id:
+                                callee_id = func_name_to_id[callee_name]
+                                self.graph_db.add_call_relation(caller_id, callee_id)
+                            # TODO: 모듈 import 정보 활용해 cross-file 함수 연결도 확장 가능
+
         except Exception as e:
             logger.error(f"그래프 DB 추가 실패 {file_path}: {e}")
     

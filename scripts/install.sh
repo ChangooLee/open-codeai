@@ -145,6 +145,8 @@ CACHE_SIZE_GB=10
 
 # 프로젝트 경로 (인덱싱용)
 PROJECT_PATH=${PROJECT_PATH:-./}
+
+GRAPH_DB_TYPE=$(if $USE_NEO4J; then echo "neo4j"; else echo "networkx"; fi)
 EOF
         
         # GPU 설정 조정
@@ -918,234 +920,94 @@ set -e
 trap 'log_error "설치 중 오류가 발생했습니다. 라인 $LINENO에서 중단되었습니다."' ERR
 
 # 메인 실행
-main "$@"#!/bin/bash
+main "$@"
 
-# Open CodeAI 통합 설치 스크립트
-# 벡터 DB, 그래프 DB, Function Calling 모든 기능 포함
-
-set -e
-
-# 색깔 출력
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-NC='\033[0m'
-
-# 로그 함수들
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_header() { echo -e "${PURPLE}$1${NC}"; }
-
-# 전역 변수
-INSTALL_DIR=$(pwd)
-INSTALL_MODE="full"  # full, minimal, dev
-DOWNLOAD_MODELS=false
-ENABLE_MONITORING=false
-PROJECT_PATH=""
-
-# 도움말 표시
-show_help() {
-    cat << EOF
-Open CodeAI 설치 스크립트
-
-사용법: $0 [옵션]
-
-옵션:
-  --mode MODE          설치 모드 (full, minimal, dev) [기본값: full]
-  --download-models    AI 모델 자동 다운로드
-  --enable-monitoring  Prometheus/Grafana 모니터링 활성화
-  --project-path PATH  인덱싱할 프로젝트 경로 설정
-  --help               이 도움말 표시
-
-설치 모드:
-  full     - 모든 기능 포함 (Neo4j, Redis, 모니터링)
-  minimal  - 기본 기능만 (벡터 DB, 기본 LLM)
-  dev      - 개발 환경 (디버그 도구 포함)
-
-예시:
-  $0 --mode full --download-models
-  $0 --mode minimal --project-path /path/to/project
-  $0 --mode dev --enable-monitoring
-
-EOF
+# 오프라인 패키지 설치 함수 추가
+install_offline_packages() {
+    if [ -d "./offline_packages" ]; then
+        log_info "오프라인 패키지 설치 중..."
+        pip install --no-index --find-links=offline_packages -r requirements.txt
+        if [[ "$INSTALL_MODE" == "dev" ]]; then
+            pip install --no-index --find-links=offline_packages -r requirements-dev.txt
+        fi
+        log_success "오프라인 패키지 설치 완료"
+        return 0
+    fi
+    return 1
 }
 
-# 파라미터 파싱
-parse_arguments() {
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --mode)
-                INSTALL_MODE="$2"
-                shift 2
-                ;;
-            --download-models)
-                DOWNLOAD_MODELS=true
-                shift
-                ;;
-            --enable-monitoring)
-                ENABLE_MONITORING=true
-                shift
-                ;;
-            --project-path)
-                PROJECT_PATH="$2"
-                shift 2
-                ;;
-            --help)
-                show_help
-                exit 0
-                ;;
-            *)
-                log_error "알 수 없는 옵션: $1"
-                show_help
-                exit 1
-                ;;
-        esac
-    done
+# 오프라인 Docker 이미지 로딩 함수
+load_offline_docker_images() {
+    if [ -d "./docker-images" ]; then
+        for tarfile in ./docker-images/*.tar; do
+            if [ -f "$tarfile" ]; then
+                log_info "오프라인 Docker 이미지 로딩: $tarfile"
+                docker load -i "$tarfile"
+            fi
+        done
+    fi
 }
 
-# 시스템 요구사항 확인
-check_system_requirements() {
-    log_header "=== 시스템 요구사항 확인 ==="
-    
-    # 운영체제 확인
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        OS="linux"
-        if command -v apt-get &> /dev/null; then
-            PACKAGE_MANAGER="apt"
-        elif command -v yum &> /dev/null; then
-            PACKAGE_MANAGER="yum"
+# 모델 파일 체크 함수
+check_offline_models() {
+    local model_path="./data/models/qwen2.5-coder-32b"
+    if [ -d "$model_path" ]; then
+        log_success "로컬 모델 파일이 존재합니다: $model_path"
+        return 0
+    else
+        log_warning "로컬 모델 파일이 없습니다. data/models/에 미리 복사해 주세요."
+        return 1
+    fi
+}
+
+# --no-neo4j 플래그 처리
+USE_NEO4J=true
+for arg in "$@"; do
+    if [[ "$arg" == "--no-neo4j" ]]; then
+        USE_NEO4J=false
+        log_info "--no-neo4j 플래그 감지: NetworkX(in-memory) 그래프 DB만 사용합니다."
+    fi
+    # ... 기존 플래그 처리 ...
+done
+
+# 메인 설치 함수에서 오프라인 설치 분기 추가
+main_install() {
+    # 오프라인 패키지 설치 시도
+    install_offline_packages || {
+        # 오프라인 패키지 없으면 기존 방식
+        if [[ "$GPU_AVAILABLE" == "true" ]]; then
+            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+            pip install faiss-gpu>=1.7.4
+            pip install vllm>=0.2.7
         else
-            log_error "지원하지 않는 Linux 배포판입니다"
-            exit 1
+            log_warning "GPU를 감지할 수 없습니다. CPU 버전으로 설치합니다"
+            GPU_AVAILABLE=false
+            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+            pip install faiss-cpu>=1.7.4
         fi
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        OS="macos"
-        PACKAGE_MANAGER="brew"
-    else
-        log_error "지원하지 않는 운영체제입니다: $OSTYPE"
-        exit 1
-    fi
-    
-    log_info "운영체제: $OS"
-    log_info "패키지 매니저: $PACKAGE_MANAGER"
-    
-    # 메모리 확인
-    if command -v free &> /dev/null; then
-        MEMORY_GB=$(free -g | awk '/^Mem:/{print $2}')
-    elif command -v vm_stat &> /dev/null; then
-        MEMORY_GB=$(echo "$(vm_stat | grep "Pages free" | awk '{print $3}' | sed 's/\.//' ) * 4096 / 1024 / 1024 / 1024" | bc)
-    else
-        MEMORY_GB=8  # 기본값
-    fi
-    
-    log_info "시스템 메모리: ${MEMORY_GB}GB"
-    
-    # 최소 요구사항 확인
-    if [[ $MEMORY_GB -lt 16 ]]; then
-        log_warning "권장 메모리는 16GB 이상입니다 (현재: ${MEMORY_GB}GB)"
-        if [[ $MEMORY_GB -lt 8 ]]; then
-            log_error "최소 8GB 메모리가 필요합니다"
-            exit 1
+        pip install -r requirements.txt
+        if [[ "$INSTALL_MODE" == "dev" ]]; then
+            pip install -r requirements-dev.txt
         fi
-    fi
-    
-    # 디스크 공간 확인
-    DISK_FREE_GB=$(df -BG . | awk 'NR==2 {print $4}' | sed 's/G//')
-    log_info "사용 가능한 디스크 공간: ${DISK_FREE_GB}GB"
-    
-    if [[ $DISK_FREE_GB -lt 50 ]]; then
-        log_error "최소 50GB의 디스크 공간이 필요합니다"
+    }
+    log_success "Python 패키지 설치 완료"
+
+    # 오프라인 Docker 이미지 로딩
+    load_offline_docker_images
+
+    # 모델 파일 체크
+    check_offline_models || {
+        log_error "모델 파일이 없습니다. 설치를 중단합니다."
         exit 1
-    fi
-}
+    }
 
-# 시스템 의존성 설치
-install_system_dependencies() {
-    log_header "=== 시스템 의존성 설치 ==="
-    
-    case $PACKAGE_MANAGER in
-        "apt")
-            sudo apt update
-            sudo apt install -y \
-                python3.10 python3.10-dev python3.10-venv python3-pip \
-                build-essential cmake git curl wget \
-                pkg-config libssl-dev libffi-dev \
-                docker.io docker-compose-plugin \
-                htop nvtop tree jq \
-                nodejs npm
-            ;;
-        "yum")
-            sudo yum groupinstall -y "Development Tools"
-            sudo yum install -y \
-                python3.10 python3.10-devel python3-pip \
-                cmake git curl wget \
-                docker docker-compose \
-                htop tree jq \
-                nodejs npm
-            ;;
-        "brew")
-            brew update
-            brew install python@3.10 cmake git curl wget nodejs npm jq
-            brew install --cask docker
-            ;;
-    esac
-    
-    # Docker 서비스 시작
-    if command -v systemctl &> /dev/null; then
-        sudo systemctl start docker
-        sudo systemctl enable docker
-        sudo usermod -aG docker $USER
-    elif command -v service &> /dev/null; then
-        sudo service docker start
-    fi
-    
-    log_success "시스템 의존성 설치 완료"
-}
+    # 환경 변수 파일 생성 시 그래프 DB 타입 반영
+    create_env_file
 
-# Python 환경 설정
-setup_python_environment() {
-    log_header "=== Python 환경 설정 ==="
-    
-    # Python 버전 확인
-    PYTHON_CMD="python3.10"
-    if ! command -v $PYTHON_CMD &> /dev/null; then
-        PYTHON_CMD="python3"
-    fi
-    
-    PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | cut -d" " -f2)
-    log_info "Python 버전: $PYTHON_VERSION"
-    
-    # 가상환경 생성
-    if [[ ! -d "venv" ]]; then
-        $PYTHON_CMD -m venv venv
-        log_success "Python 가상환경 생성 완료"
+    # Docker 컨테이너 설정 (Neo4j 사용 여부 반영)
+    if $USE_NEO4J; then
+        setup_docker_containers
     else
-        log_info "기존 가상환경 사용"
+        log_info "Neo4j 컨테이너를 실행하지 않습니다. NetworkX(in-memory)만 사용합니다."
     fi
-    
-    # 가상환경 활성화
-    source venv/bin/activate
-    
-    # pip 업그레이드
-    pip install --upgrade pip setuptools wheel
-    
-    log_success "Python 환경 설정 완료"
 }
-
-# Python 패키지 설치
-install_python_packages() {
-    log_header "=== Python 패키지 설치 ==="
-    
-    source venv/bin/activate
-    
-    # GPU 확인
-    if command -v nvidia-smi &> /dev/null; then
-        log_info "NVIDIA GPU 감지됨"
-        GPU_AVAILABLE=true
-        
-        # GPU 버전 패키지 설치
-        pip install torch

@@ -1,9 +1,10 @@
-# Open CodeAI 메인 설정
+# Open CodeAI 메인 설정 (주요 옵션 한글+영문 설명, 실전 예시 포함)
 project:
-  name: "open-codeai"
-  version: "1.0.0"
-  max_files: 10000
-  supported_extensions:
+  name: "open-codeai"   # 프로젝트 이름 (Project name)
+  version: "1.0.0"      # 버전 (Version)
+  max_files: 10000       # 인덱싱 최대 파일 수 (Max files to index)
+  project_path: "./"    # 인덱싱할 코드 경로 (Path to your codebase)
+  supported_extensions:  # 지원 확장자 (Supported file extensions)
     - ".py"
     - ".js"
     - ".ts"
@@ -17,7 +18,7 @@ project:
     - ".scala"
     - ".kt"
 
-# 서버 설정
+# 서버 설정 (Server settings)
 server:
   host: "0.0.0.0"
   port: 8000
@@ -25,16 +26,19 @@ server:
   reload: false
   log_level: "INFO"
   
-# LLM 설정
+# LLM 설정 (로컬 모델/추론 엔진/양자화 등)
 llm:
   main_model:
-    name: "qwen2.5-coder-32b"
-    path: "./data/models/qwen2.5-coder-32b"
-    context_window: 32768
-    max_tokens: 4096
-    temperature: 0.1
-    gpu_memory_fraction: 0.7
-    use_vllm: true
+    name: "qwen2.5-coder-32b"   # 모델 이름 (Model name)
+    path: "./data/models/qwen2.5-coder-32b" # 모델 경로 (Model path)
+    type: "qwen2.5-coder"       # 모델 타입 (qwen2.5-coder, llama, starcoder 등)
+    context_window: 32768        # 최대 컨텍스트 길이 (Max context window)
+    max_tokens: 4096             # 생성 최대 토큰 (Max tokens per generation)
+    temperature: 0.1             # 생성 온도 (Temperature)
+    gpu_memory_fraction: 0.7     # GPU 메모리 사용 비율 (GPU memory fraction)
+    use_vllm: true               # vLLM 엔진 사용 여부 (Use vLLM engine)
+    quantize: "none"             # 양자화 옵션(none, 4bit, 8bit) (Quantization)
+    device: "auto"               # "cuda", "cpu", "auto"
     
   embedding_model:
     name: "bge-large-en-v1.5"
@@ -48,21 +52,23 @@ llm:
     path: "./data/models/codet5-small"
     enable: true
 
-# 데이터베이스 설정
+# 데이터베이스 설정 (DB/인덱스/샤딩/컨테이너리스)
 database:
   vector:
-    type: "faiss"
+    type: "faiss"                # 벡터 DB 타입 (faiss)
     path: "./data/vector_index"
-    index_type: "HNSW"
-    ef_construction: 200
-    ef_search: 50
+    index_type: "HNSW"           # 인덱스 타입 (HNSW, Flat 등)
+    ef_construction: 200          # HNSW 인덱스 생성 파라미터
+    ef_search: 50                 # HNSW 검색 파라미터
     memory_limit_gb: 16
+    sharding: false               # 디렉토리별 샤딩 (Sharding by module)
     
   graph:
-    type: "neo4j"  # 또는 "networkx"
+    type: "neo4j"                # "neo4j" or "networkx" (컨테이너리스는 networkx)
     path: "./data/graph_db"
     memory_limit_gb: 8
-    enable_persistence: true
+    enable_persistence: true      # NetworkX 그래프 저장 여부
+    auto_select: true             # 파일 수에 따라 자동 전환 (Auto select DB type by project size)
     
   metadata:
     type: "sqlite"
@@ -70,9 +76,9 @@ database:
     connection_pool_size: 20
     timeout: 30
 
-# 인덱싱 설정
+# 인덱싱 설정 (Indexing)
 indexing:
-  strategy: "hybrid"  # semantic, fixed, hybrid
+  strategy: "hybrid"             # semantic, fixed, hybrid
   chunk_size: 1000
   chunk_overlap: 200
   min_chunk_size: 100
@@ -80,7 +86,7 @@ indexing:
   batch_size: 100
   memory_per_worker_gb: 4
   
-# 성능 최적화
+# 성능 최적화 (Performance)
 performance:
   cache:
     enable: true
@@ -96,7 +102,7 @@ performance:
     memory_fraction: 0.8
     mixed_precision: true
 
-# 모니터링 설정
+# 모니터링/파일감시 (Monitoring)
 monitoring:
   file_watcher:
     enable: true
@@ -104,11 +110,11 @@ monitoring:
     batch_updates: true
     
   metrics:
-    enable: true
+    enable: false                # 오프라인 환경 기본값 (Prometheus/Grafana)
     collection_interval: 60
     retention_days: 30
 
-# Continue.dev 통합
+# Continue.dev 통합 (Continue.dev integration)
 continue_integration:
   enabled: true
   connection_type: "websocket"
@@ -119,4 +125,12 @@ continue_integration:
     autocomplete: true
     code_review: true
     refactoring: true
-    function_calling: true 
+    function_calling: true
+
+# 오프라인/컨테이너리스/설치 모드 예시 (Offline/Containerless/Mode Example)
+#
+# - 오프라인 설치: offline_packages/ 폴더에 wheel 파일, data/models/에 모델 파일 복사
+# - 컨테이너리스: database.graph.type: "networkx"로 설정, Neo4j/Redis 미사용
+# - 최소 모드: monitoring.metrics.enable: false, continue_integration.enabled: false
+# - 양자화: llm.main_model.quantize: "4bit" (bitsandbytes 필요)
+# - 샤딩: database.vector.sharding: true (대형 모노레포) 
