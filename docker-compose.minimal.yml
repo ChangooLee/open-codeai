@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: open-codeai-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/opencodeai
+      - NEO4J_dbms_memory_heap__initial__size=512M
+      - NEO4J_dbms_memory_heap__max__size=1G
+      - NEO4J_dbms_memory_pagecache__size=512M
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+    restart: unless-stopped
+
+networks:
+  default:
+    name: open-codeai-network

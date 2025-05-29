@@ -20,10 +20,15 @@ This project is licensed under the [MIT License](LICENSE).
    - Install [Homebrew](https://brew.sh/)
    - Install Python 3.10+: `brew install python`
    - Install Docker Desktop: [Official Download](https://www.docker.com/products/docker-desktop/)
-2. **Copy Offline Packages/Models**
-   - Copy `offline_packages/`, `data/models/` folders
+2. **Project Clone**
+   - Clone this repository to get the required offline_packages/ folder automatically:
+   ```bash
+   git clone https://github.com/ChangooLee/open-codeai.git
+   cd open-codeai
+   ```
 3. **Install and Run**
    ```bash
+   cd open-codeai/scripts   # Make sure you are in the scripts folder!
    chmod +x install.sh
    ./install.sh --offline
    ./start.sh
@@ -39,8 +44,12 @@ This project is licensed under the [MIT License](LICENSE).
 1. **Install Required Tools**
    - Install [Python 3.10+](https://www.python.org/downloads/windows/) (check Add to PATH)
    - Install [Docker Desktop](https://www.docker.com/products/docker-desktop/)
-2. **Copy Offline Packages/Models**
-   - Copy `offline_packages\`, `data\models\` folders
+2. **Project Clone**
+   - Clone this repository to get the required offline_packages/ folder automatically:
+   ```bash
+   git clone https://github.com/ChangooLee/open-codeai.git
+   cd open-codeai
+   ```
 3. **Install and Run**
    - In PowerShell:
      ```powershell
@@ -59,12 +68,17 @@ This project is licensed under the [MIT License](LICENSE).
 1. **Install Required Tools**
    - Install Python 3.10+: `sudo apt install python3 python3-venv python3-pip`
    - Install Docker: `curl -fsSL https://get.docker.com | sh`
-2. **Copy Offline Packages/Models**
-   - Copy `offline_packages/`, `data/models/` folders
+2. **Project Clone**
+   - Clone this repository to get the required offline_packages/ folder automatically:
+   ```bash
+   git clone https://github.com/ChangooLee/open-codeai.git
+   cd open-codeai
+   ```
 3. **Install and Run**
    ```bash
-   chmod +x install.sh
-   ./install.sh --offline
+   cd open-codeai   # Make sure you are in the project root!
+   chmod +x scripts/install.sh
+   ./scripts/install.sh --offline
    ./start.sh
    ./index.sh /home/yourname/yourproject
    ```

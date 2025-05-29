@@ -1,3 +1,28 @@
+# Deprecated Neo4j config cleanup (Neo4j 5.x 이상에서 필요)
+cleanup_neo4j_conf() {
+    for conf_file in data/neo4j/data/neo4j.conf data/neo4j/conf/neo4j.conf; do
+        if [[ -f "$conf_file" ]]; then
+            sed -i.bak '/dbms\.memory\.pagecache_size/d' "$conf_file"
+        fi
+    done
+}
+
+log_header() {
+    echo -e "\033[1;36m$1\033[0m"
+}
+log_info() {
+    echo -e "\033[1;34m[INFO]\033[0m $1"
+}
+log_success() {
+    echo -e "\033[1;32m[SUCCESS]\033[0m $1"
+}
+log_warning() {
+    echo -e "\033[1;33m[WARNING]\033[0m $1"
+}
+log_error() {
+    echo -e "\033[1;31m[ERROR]\033[0m $1"
+}
+
 install_python_packages() {
     log_header "=== Python 패키지 설치 ==="
     if [[ "$GPU_AVAILABLE" == "true" ]]; then
@@ -22,6 +47,9 @@ install_python_packages() {
 # Docker 컨테이너 설정
 setup_docker_containers() {
     log_header "=== Docker 컨테이너 설정 ==="
+    
+    # Neo4j conf 파일 클린업 (구버전 설정 제거)
+    cleanup_neo4j_conf
     
     # Docker Compose 파일 선택
     if [[ "$INSTALL_MODE" == "minimal" ]]; then
@@ -76,9 +104,9 @@ services:
       - "7687:7687"
     environment:
       - NEO4J_AUTH=neo4j/opencodeai
-      - NEO4J_dbms_memory_heap_initial_size=512M
-      - NEO4J_dbms_memory_heap_max_size=1G
-      - NEO4J_dbms_memory_pagecache_size=512M
+      - NEO4J_dbms_memory_heap__initial__size=512M
+      - NEO4J_dbms_memory_heap__max__size=1G
+      - NEO4J_dbms_memory_pagecache__size=512M
     volumes:
       - ./data/neo4j/data:/data
       - ./data/neo4j/logs:/logs
@@ -821,7 +849,6 @@ show_completion_message() {
     echo "📋 설치 정보:"
     echo "   - 모드: $INSTALL_MODE"
     echo "   - GPU: $([ "$GPU_AVAILABLE" == "true" ] && echo "사용 가능" || echo "사용 불가")"
-    echo "   - 모델 다운로드: $([ "$DOWNLOAD_MODELS" == "true" ] && echo "완료" || echo "건너뜀")"
     echo "   - 모니터링: $([ "$ENABLE_MONITORING" == "true" ] && echo "활성화" || echo "비활성화")"
     if [[ -n "$PROJECT_PATH" ]]; then
         echo "   - 인덱싱된 프로젝트: $PROJECT_PATH"
@@ -853,13 +880,6 @@ show_completion_message() {
     echo "   - 코드 리뷰: 코드 선택 후 '@review'"
     echo "   - 코드 설명: 코드 선택 후 '@explain'"
     echo ""
-    
-    if [[ "$DOWNLOAD_MODELS" == "false" ]]; then
-        log_warning "모델이 다운로드되지 않았습니다."
-        echo "   다음 명령으로 다운로드하세요:"
-        echo "   source venv/bin/activate && python scripts/download_models.py"
-        echo ""
-    fi
     
     echo "❓ 문제 해결:"
     echo "   - 로그 확인: tail -f logs/opencodeai.log"
@@ -911,105 +931,6 @@ parse_arguments() {
     done
 }
 
-# 메인 실행 함수
-main() {
-    # 파라미터 파싱
-    parse_arguments "$@"
-
-    # 경로/권한/특수문자 안내
-    echo ""
-    log_header "======================================"
-    log_header "⚠️  경로에 한글/공백/특수문자 사용을 피하세요!"
-    log_header "======================================"
-    echo ""
-
-    # Docker 실행 상태 체크
-    if ! docker info &> /dev/null; then
-        log_error "Docker Desktop/엔진이 실행 중이 아닙니다. Docker를 실행한 후 다시 시도하세요."
-        exit 1
-    fi
-
-    # 오프라인 패키지/모델/도커 이미지 체크
-    if [[ "$OFFLINE_INSTALL" == "true" ]]; then
-        if [[ ! -d "offline_packages" || -z $(ls -A offline_packages 2>/dev/null) ]]; then
-            log_warning "offline_packages 폴더가 없거나 비어 있습니다. 오프라인 패키지 설치가 실패할 수 있습니다."
-        fi
-        if [[ ! -d "data/models" || -z $(ls -A data/models 2>/dev/null) ]]; then
-            log_error "data/models 폴더가 없거나 비어 있습니다. 모델 파일을 미리 복사해야 합니다."
-            exit 1
-        fi
-        if [[ -d "docker-images" ]]; then
-            if [[ -z $(ls -A docker-images/*.tar 2>/dev/null) ]]; then
-                log_warning "docker-images 폴더에 Docker 이미지 tar 파일이 없습니다."
-            fi
-        fi
-    fi
-
-    echo ""
-    log_header "======================================"
-    log_header "🤖 Open CodeAI 설치 시작"
-    log_header "======================================"
-    echo ""
-    log_info "설치 모드: $INSTALL_MODE"
-    log_info "모델 다운로드: $([ "$DOWNLOAD_MODELS" == "true" ] && echo "예" || echo "아니오")"
-    log_info "모니터링: $([ "$ENABLE_MONITORING" == "true" ] && echo "활성화" || echo "비활성화")"
-    if [[ -n "$PROJECT_PATH" ]]; then
-        log_info "프로젝트 경로: $PROJECT_PATH"
-    fi
-    echo ""
-
-    if [[ "$OFFLINE_INSTALL" == "true" ]]; then
-        main_install
-        # 오프라인 설치 후 검증 및 안내
-        if verify_installation; then
-            show_completion_message
-        else
-            log_error "설치 중 일부 문제가 발생했습니다."
-            log_info "문제 해결 후 다음 명령으로 검증할 수 있습니다:"
-            log_info "python scripts/verify_installation.py"
-        fi
-        return
-    fi
-
-    # 온라인 설치 루트
-    check_system_requirements
-    install_system_dependencies
-    setup_python_environment
-    install_python_packages
-    setup_docker_containers
-    download_models
-    initialize_databases
-    index_project
-    setup_continue_integration
-    create_startup_scripts
-
-    # start.sh, index.sh 실행 권한 자동 부여
-    if [[ -f "start.sh" && ! -x "start.sh" ]]; then
-        chmod +x start.sh
-        log_info "start.sh에 실행 권한을 부여했습니다."
-    fi
-    if [[ -f "index.sh" && ! -x "index.sh" ]]; then
-        chmod +x index.sh
-        log_info "index.sh에 실행 권한을 부여했습니다."
-    fi
-
-    # 설치 검증
-    if verify_installation; then
-        show_completion_message
-    else
-        log_error "설치 중 일부 문제가 발생했습니다."
-        log_info "문제 해결 후 다음 명령으로 검증할 수 있습니다:"
-        log_info "python scripts/verify_installation.py"
-    fi
-}
-
-# 에러 처리
-set -e
-trap 'log_error "설치 중 오류가 발생했습니다. 라인 $LINENO에서 중단되었습니다."' ERR
-
-# 메인 실행
-main "$@"
-
 # 오프라인 패키지 설치 함수 추가
 install_offline_packages() {
     if [ -d "./offline_packages" ]; then
@@ -1036,32 +957,16 @@ load_offline_docker_images() {
     fi
 }
 
-# 모델 파일 체크 함수
-check_offline_models() {
-    local model_path="./data/models/qwen2.5-coder-32b"
-    if [ -d "$model_path" ]; then
-        log_success "로컬 모델 파일이 존재합니다: $model_path"
-        return 0
-    else
-        log_warning "로컬 모델 파일이 없습니다. data/models/에 미리 복사해 주세요."
-        return 1
-    fi
-}
-
 # 메인 설치 함수에서 오프라인 설치 분기 추가
 main_install() {
     # 오프라인 패키지 설치 시도
     install_offline_packages || {
         if [[ "$GPU_AVAILABLE" == "true" ]]; then
             pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-            # pip install faiss-gpu>=1.7.4
-            # pip install vllm>=0.2.7
-            # pip install torchaudio
         else
             log_warning "GPU를 감지할 수 없습니다. CPU 버전으로 설치합니다"
             GPU_AVAILABLE=false
             pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-            # pip install faiss-cpu>=1.7.4
         fi
         pip install -r requirements.txt
         if [[ "$INSTALL_MODE" == "dev" ]]; then
@@ -1072,12 +977,6 @@ main_install() {
 
     # 오프라인 Docker 이미지 로딩
     load_offline_docker_images
-
-    # 모델 파일 체크
-    check_offline_models || {
-        log_error "모델 파일이 없습니다. 설치를 중단합니다."
-        exit 1
-    }
 
     # config.yaml → .env 자동 변환
     if [[ -f "config.yaml" ]]; then
@@ -1099,3 +998,40 @@ main_install() {
         log_info "Neo4j 컨테이너를 실행하지 않습니다. NetworkX(in-memory)만 사용합니다."
     fi
 }
+
+# 메인 실행 함수
+main() {
+    # 파라미터 파싱
+    parse_arguments "$@"
+
+    # 경로/권한/특수문자 안내
+    echo ""
+    log_header "======================================"
+    log_header "⚠️  경로에 한글/공백/특수문자 사용을 피하세요!"
+    log_header "======================================"
+    echo ""
+
+    # Docker 실행 상태 체크
+    if ! docker info &> /dev/null; then
+        log_error "Docker Desktop/엔진이 실행 중이 아닙니다. Docker를 실행한 후 다시 시도하세요."
+        exit 1
+    fi
+
+    # 오프라인 설치만 지원
+    main_install
+    # 오프라인 설치 후 검증 및 안내
+    if verify_installation; then
+        show_completion_message
+    else
+        log_error "설치 중 일부 문제가 발생했습니다."
+        log_info "문제 해결 후 다음 명령으로 검증할 수 있습니다:"
+        log_info "python scripts/verify_installation.py"
+    fi
+}
+
+# 에러 처리
+set -e
+trap 'log_error "설치 중 오류가 발생했습니다. 라인 $LINENO에서 중단되었습니다."' ERR
+
+# 메인 실행
+main "$@"
