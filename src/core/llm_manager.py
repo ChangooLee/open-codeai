@@ -1,8 +1,9 @@
 """
-Open CodeAI - LLM 관리자 구현
-로컬 모델 로딩, 추론, 임베딩 생성을 담당
+Open CodeAI - 향상된 LLM 관리자
+더미 모드가 완전 통합된 LLM 관리자
 """
 import os
+import sys
 import asyncio
 from typing import List, Optional, Dict, Any, Union
 from pathlib import Path
@@ -10,6 +11,13 @@ import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
+
+# 더미 모드 가져오기
+try:
+    from .enhanced_dummy_mode import get_enhanced_dummy_llm, get_smart_dummy_rag
+    DUMMY_MODE_AVAILABLE = True
+except ImportError:
+    DUMMY_MODE_AVAILABLE = False
 
 try:
     import torch
@@ -32,14 +40,14 @@ class ModelNotLoadedException(Exception):
     """모델이 로드되지 않았을 때 발생하는 예외"""
     pass
 
-class LLMManager:
+class EnhancedLLMManager:
     """
-    로컬 LLM 관리자
+    향상된 LLM 관리자
     
-    - 모델 로딩 및 관리
-    - 텍스트 생성 및 완성
-    - 임베딩 생성
-    - GPU/CPU 최적화
+    - 실제 모델과 더미 모드 자동 전환
+    - 컨텍스트 인식 응답
+    - 성능 최적화
+    - 에러 복구
     """
     
     def __init__(self):
@@ -53,15 +61,29 @@ class LLMManager:
         self.model_lock = threading.Lock()
         self.executor = ThreadPoolExecutor(max_workers=2)
         
+        # 더미 모드 구성 요소
+        self.dummy_llm = None
+        self.dummy_rag = None
+        self.mode = "unknown"  # "real", "dummy", "hybrid"
+        
         # 하드웨어 정보 및 권장 설정
         self.hardware_info = get_hardware_info()
         self.recommended_settings = recommend_settings(self.hardware_info)
         
-        logger.info(f"LLM 관리자 초기화 - 디바이스: {self.device}")
+        # 성능 메트릭
+        self.performance_stats = {
+            'total_requests': 0,
+            'dummy_requests': 0,
+            'real_requests': 0,
+            'average_response_time': 0.0,
+            'error_count': 0
+        }
+        
+        logger.info(f"Enhanced LLM 관리자 초기화 - 디바이스: {self.device}")
         logger.info(f"권장 설정: {self.recommended_settings}")
         
-        # 모델 로딩 (비동기)
-        asyncio.create_task(self._initialize_models())
+        # 비동기 초기화
+        asyncio.create_task(self._initialize_system())
     
     def _get_device(self) -> str:
         """최적 디바이스 결정"""
@@ -71,45 +93,81 @@ class LLMManager:
         if torch.cuda.is_available():
             return "cuda"
         elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
-            return "mps" 
+            return "mps"
         else:
             return "cpu"
     
-    async def _initialize_models(self):
-        """모델들을 비동기로 초기화"""
+    async def _initialize_system(self):
+        """전체 시스템 초기화"""
         try:
-            logger.info("모델 초기화 시작...")
+            logger.info("Enhanced LLM 시스템 초기화 시작...")
             
-            # 메인 모델 로딩
-            if settings.llm and settings.llm.main_model:
-                await self._load_main_model()
-            else:
-                logger.warning("메인 모델 설정이 없습니다. 더미 모드로 실행됩니다.")
+            # 1. 더미 모드 초기화 (항상 사용 가능하도록)
+            await self._initialize_dummy_mode()
             
-            # 임베딩 모델 로딩  
-            if settings.llm and settings.llm.embedding_model:
-                await self._load_embedding_model()
+            # 2. 실제 모델 로딩 시도
+            model_loaded = await self._initialize_real_models()
+            
+            # 3. 모드 결정
+            if model_loaded:
+                self.mode = "real"
+                logger.success("실제 AI 모델 모드로 실행")
+            elif self.dummy_llm:
+                self.mode = "dummy"
+                logger.warning("더미 모드로 실행 (모델 미로드)")
             else:
-                logger.warning("임베딩 모델 설정이 없습니다.")
-                
-            logger.success("모델 초기화 완료")
+                self.mode = "basic"
+                logger.warning("기본 모드로 실행 (제한된 기능)")
+            
+            logger.success(f"Enhanced LLM 시스템 초기화 완료 - 모드: {self.mode}")
             
         except Exception as e:
-            logger.error(f"모델 초기화 실패: {e}")
-            # 실패해도 서버는 계속 실행 (더미 모드)
+            logger.error(f"시스템 초기화 실패: {e}")
+            self.mode = "error"
+    
+    async def _initialize_dummy_mode(self):
+        """더미 모드 초기화"""
+        try:
+            if DUMMY_MODE_AVAILABLE:
+                self.dummy_llm = get_enhanced_dummy_llm()
+                self.dummy_rag = get_smart_dummy_rag()
+                logger.success("더미 모드 구성 요소 초기화 완료")
+            else:
+                logger.warning("더미 모드 모듈을 찾을 수 없습니다")
+        except Exception as e:
+            logger.error(f"더미 모드 초기화 실패: {e}")
+    
+    async def _initialize_real_models(self) -> bool:
+        """실제 모델들 초기화"""
+        try:
+            if not HAS_TORCH:
+                logger.warning("PyTorch가 설치되지 않았습니다")
+                return False
+            
+            # 메인 모델 로딩
+            main_loaded = False
+            if settings.llm and settings.llm.main_model:
+                main_loaded = await self._load_main_model()
+            
+            # 임베딩 모델 로딩
+            embedding_loaded = False
+            if settings.llm and settings.llm.embedding_model:
+                embedding_loaded = await self._load_embedding_model()
+            
+            return main_loaded or embedding_loaded
+            
+        except Exception as e:
+            logger.error(f"실제 모델 초기화 실패: {e}")
+            return False
     
     @log_performance("main_model_loading")
-    async def _load_main_model(self):
+    async def _load_main_model(self) -> bool:
         """메인 LLM 모델 로딩"""
-        if not HAS_TORCH:
-            logger.warning("PyTorch가 설치되지 않았습니다. 더미 모드로 실행됩니다.")
-            return
-        
         model_path = settings.llm.main_model.path
         
         if not os.path.exists(model_path):
-            logger.error(f"모델 경로를 찾을 수 없습니다: {model_path}")
-            return
+            logger.warning(f"모델 경로를 찾을 수 없습니다: {model_path}")
+            return False
         
         try:
             logger.info(f"메인 모델 로딩 중: {model_path}")
@@ -121,7 +179,6 @@ class LLMManager:
                 use_fast=True
             )
             
-            # 패딩 토큰 설정
             if self.main_tokenizer.pad_token is None:
                 self.main_tokenizer.pad_token = self.main_tokenizer.eos_token
             
@@ -138,10 +195,10 @@ class LLMManager:
                     0: f"{int(self.recommended_settings['memory_limit_gb'] * 0.8)}GB"
                 }
             
-            # 양자화 설정 (메모리 절약)
+            # 양자화 설정
             if self.device == "cuda" and self.hardware_info["gpu"]["devices"]:
                 gpu_memory = self.hardware_info["gpu"]["devices"][0]["memory_gb"]
-                if gpu_memory < 24:  # 24GB 미만이면 양자화 사용
+                if gpu_memory < 24:
                     model_kwargs["quantization_config"] = BitsAndBytesConfig(
                         load_in_4bit=True,
                         bnb_4bit_compute_dtype=torch.float16,
@@ -155,7 +212,6 @@ class LLMManager:
                 **model_kwargs
             )
             
-            # 평가 모드로 설정
             self.main_model.eval()
             
             # 생성 설정
@@ -171,34 +227,31 @@ class LLMManager:
             )
             
             logger.success(f"메인 모델 로딩 완료: {settings.llm.main_model.name}")
+            return True
             
         except Exception as e:
             logger.error(f"메인 모델 로딩 실패: {e}")
             self.main_model = None
             self.main_tokenizer = None
+            return False
     
     @log_performance("embedding_model_loading")
-    async def _load_embedding_model(self):
+    async def _load_embedding_model(self) -> bool:
         """임베딩 모델 로딩"""
-        if not HAS_TORCH:
-            return
-        
         model_path = settings.llm.embedding_model.path
         
         if not os.path.exists(model_path):
-            logger.error(f"임베딩 모델 경로를 찾을 수 없습니다: {model_path}")
-            return
+            logger.warning(f"임베딩 모델 경로를 찾을 수 없습니다: {model_path}")
+            return False
         
         try:
             logger.info(f"임베딩 모델 로딩 중: {model_path}")
             
-            # 토크나이저 로딩
             self.embedding_tokenizer = AutoTokenizer.from_pretrained(
                 model_path,
                 trust_remote_code=True
             )
             
-            # 모델 로딩
             self.embedding_model = AutoModel.from_pretrained(
                 model_path,
                 trust_remote_code=True,
@@ -206,42 +259,91 @@ class LLMManager:
                 device_map="auto" if self.device == "cuda" else None
             )
             
-            # 모델을 디바이스로 이동
-            if self.device != "cuda":  # device_map이 auto가 아닐 때만
+            if self.device != "cuda":
                 self.embedding_model = self.embedding_model.to(self.device)
             
             self.embedding_model.eval()
             
             logger.success(f"임베딩 모델 로딩 완료: {settings.llm.embedding_model.name}")
+            return True
             
         except Exception as e:
             logger.error(f"임베딩 모델 로딩 실패: {e}")
             self.embedding_model = None
             self.embedding_tokenizer = None
+            return False
     
     async def generate_response(
         self, 
         prompt: str, 
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        stop_sequences: Optional[List[str]] = None
+        stop_sequences: Optional[List[str]] = None,
+        context: Optional[str] = None
     ) -> str:
         """
-        텍스트 생성 (채팅 응답용)
+        지능형 응답 생성
         
         Args:
             prompt: 입력 프롬프트
             max_tokens: 최대 토큰 수
             temperature: 생성 온도
             stop_sequences: 중지 시퀀스
+            context: 추가 컨텍스트
             
         Returns:
-            생성된 텍스트
+            생성된 응답
         """
         
-        # 더미 모드 (모델이 로딩되지 않은 경우)
-        if not self.main_model or not HAS_TORCH:
-            return await self._generate_dummy_response(prompt)
+        start_time = time.time()
+        self.performance_stats['total_requests'] += 1
+        
+        try:
+            # 컨텍스트 통합
+            if context:
+                enhanced_prompt = f"{context}\n\n사용자 질문: {prompt}\n\n답변:"
+            else:
+                enhanced_prompt = prompt
+            
+            # 모드별 처리
+            if self.mode == "real" and self.main_model:
+                response = await self._generate_real_response(
+                    enhanced_prompt, max_tokens, temperature, stop_sequences
+                )
+                self.performance_stats['real_requests'] += 1
+                
+            elif self.mode == "dummy" and self.dummy_llm:
+                response = await self.dummy_llm.generate_smart_response(enhanced_prompt)
+                self.performance_stats['dummy_requests'] += 1
+                
+            else:
+                response = await self._generate_fallback_response(prompt)
+                self.performance_stats['dummy_requests'] += 1
+            
+            # 성능 통계 업데이트
+            response_time = time.time() - start_time
+            self._update_performance_stats(response_time)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"응답 생성 실패: {e}")
+            self.performance_stats['error_count'] += 1
+            
+            # 폴백 처리
+            if self.dummy_llm:
+                return await self.dummy_llm.generate_smart_response(prompt)
+            else:
+                return await self._generate_fallback_response(prompt)
+    
+    async def _generate_real_response(
+        self, 
+        prompt: str, 
+        max_tokens: Optional[int],
+        temperature: Optional[float],
+        stop_sequences: Optional[List[str]]
+    ) -> str:
+        """실제 모델로 응답 생성"""
         
         try:
             # 생성 설정 준비
@@ -265,8 +367,8 @@ class LLMManager:
             return response
             
         except Exception as e:
-            logger.error(f"텍스트 생성 실패: {e}")
-            return await self._generate_dummy_response(prompt)
+            logger.error(f"실제 모델 생성 실패: {e}")
+            raise
     
     def _generate_text_sync(
         self, 
@@ -274,7 +376,7 @@ class LLMManager:
         generation_config: GenerationConfig,
         stop_sequences: Optional[List[str]] = None
     ) -> str:
-        """동기 텍스트 생성 (스레드풀에서 실행)"""
+        """동기 텍스트 생성"""
         
         with self.model_lock:
             try:
@@ -283,7 +385,10 @@ class LLMManager:
                     prompt,
                     return_tensors="pt",
                     truncation=True,
-                    max_length=min(len(prompt.split()) * 2, self.main_tokenizer.model_max_length - generation_config.max_new_tokens)
+                    max_length=min(
+                        len(prompt.split()) * 2, 
+                        self.main_tokenizer.model_max_length - generation_config.max_new_tokens
+                    )
                 ).to(self.device)
                 
                 # 생성
@@ -322,40 +427,25 @@ class LLMManager:
         temperature: Optional[float] = None,
         stop_sequences: Optional[List[str]] = None
     ) -> str:
-        """
-        코드 완성 생성 (자동완성용)
-        
-        Args:
-            prompt: 완성할 프롬프트 (FIM 포맷 포함 가능)
-            max_tokens: 최대 토큰 수
-            temperature: 생성 온도
-            stop_sequences: 중지 시퀀스
-            
-        Returns:
-            완성된 텍스트
-        """
+        """코드 완성 생성"""
         
         # FIM (Fill-in-the-Middle) 처리
         if "<PRE>" in prompt and "<SUF>" in prompt and "<MID>" in prompt:
-            # FIM 포맷 파싱
             parts = prompt.split("<PRE>")[1].split("<SUF>")
             prefix = parts[0]
             suffix_and_mid = parts[1].split("<MID>")
             suffix = suffix_and_mid[0] 
             
-            # 코드 완성에 최적화된 프롬프트 생성
             completion_prompt = f"# Complete the following code:\n{prefix}# TODO: Complete here\n{suffix}"
         else:
             completion_prompt = prompt
         
-        # 코드 완성에 적합한 설정 조정
+        # 코드 완성 최적화 설정
         if temperature is None:
-            temperature = 0.1  # 코드 완성은 낮은 온도 사용
-        
+            temperature = 0.1
         if max_tokens is None:
-            max_tokens = 256  # 코드 완성은 짧게
+            max_tokens = 256
         
-        # 코드 완성용 중지 시퀀스 추가
         code_stop_sequences = ["\n\n", "```", "def ", "class ", "import ", "from "]
         if stop_sequences:
             code_stop_sequences.extend(stop_sequences)
@@ -368,41 +458,41 @@ class LLMManager:
         )
     
     async def generate_embedding(self, text: str) -> List[float]:
-        """
-        텍스트 임베딩 생성
-        
-        Args:
-            text: 임베딩할 텍스트
-            
-        Returns:
-            임베딩 벡터
-        """
-        
-        # 더미 모드
-        if not self.embedding_model or not HAS_TORCH:
-            return await self._generate_dummy_embedding(text)
+        """임베딩 생성"""
         
         try:
-            # 비동기 임베딩 생성
-            loop = asyncio.get_event_loop()
-            embedding = await loop.run_in_executor(
-                self.executor,
-                self._generate_embedding_sync,
-                text
-            )
-            
-            return embedding
-            
+            if self.mode == "real" and self.embedding_model:
+                return await self._generate_real_embedding(text)
+            elif self.dummy_llm:
+                return await self.dummy_llm.generate_smart_embedding(text)
+            else:
+                return await self._generate_fallback_embedding(text)
+                
         except Exception as e:
             logger.error(f"임베딩 생성 실패: {e}")
-            return await self._generate_dummy_embedding(text)
+            # 폴백
+            if self.dummy_llm:
+                return await self.dummy_llm.generate_smart_embedding(text)
+            else:
+                return await self._generate_fallback_embedding(text)
+    
+    async def _generate_real_embedding(self, text: str) -> List[float]:
+        """실제 모델로 임베딩 생성"""
+        
+        loop = asyncio.get_event_loop()
+        embedding = await loop.run_in_executor(
+            self.executor,
+            self._generate_embedding_sync,
+            text
+        )
+        
+        return embedding
     
     def _generate_embedding_sync(self, text: str) -> List[float]:
         """동기 임베딩 생성"""
         
         with self.model_lock:
             try:
-                # 토크나이징
                 inputs = self.embedding_tokenizer(
                     text,
                     return_tensors="pt",
@@ -411,15 +501,13 @@ class LLMManager:
                     padding=True
                 ).to(self.device)
                 
-                # 임베딩 생성
                 with torch.no_grad():
                     outputs = self.embedding_model(**inputs)
                     
-                    # Mean pooling
                     embeddings = outputs.last_hidden_state
                     attention_mask = inputs['attention_mask']
                     
-                    # 마스크된 평균 계산
+                    # Mean pooling
                     mask_expanded = attention_mask.unsqueeze(-1).expand(embeddings.size()).float()
                     sum_embeddings = torch.sum(embeddings * mask_expanded, 1)
                     sum_mask = torch.clamp(mask_expanded.sum(1), min=1e-9)
@@ -434,76 +522,86 @@ class LLMManager:
                 logger.error(f"동기 임베딩 생성 실패: {e}")
                 raise
     
-    # 더미 모드 함수들 (모델이 없을 때 사용)
-    
-    async def _generate_dummy_response(self, prompt: str) -> str:
-        """더미 응답 생성 (개발/테스트용)"""
+    async def _generate_fallback_response(self, prompt: str) -> str:
+        """기본 폴백 응답"""
         
-        # 실제 AI처럼 보이는 지연 시간
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.5)  # 실제 AI처럼 지연
         
-        # 프롬프트 분석해서 적절한 더미 응답 생성
-        if "code" in prompt.lower() or "function" in prompt.lower():
-            return """```python
-def example_function():
-    \"\"\"이것은 더미 코드 생성 예시입니다.\"\"\"
-    return "Hello from Open CodeAI!"
-```
+        return f"""안녕하세요! Open CodeAI가 기본 모드로 응답드립니다.
 
-이 코드는 더미 모드에서 생성된 예시입니다. 실제 모델을 로드하려면 모델 파일을 설정하세요."""
-        
-        elif "explain" in prompt.lower():
-            return "이것은 Open CodeAI의 더미 모드 응답입니다. 실제 AI 모델이 로드되면 더 정확한 설명을 제공할 수 있습니다."
-        
-        else:
-            return "안녕하세요! Open CodeAI가 더미 모드로 실행 중입니다. 모델을 로드하면 더 나은 응답을 제공할 수 있습니다."
+현재 질문: "{prompt[:100]}{'...' if len(prompt) > 100 else ''}"
+
+**현재 상태:**
+- 실제 AI 모델: 미로드
+- 더미 모드: 제한적 사용 가능
+
+**모든 기능을 사용하려면:**
+1. 모델 다운로드: `python scripts/download_models.py`
+2. 서버 재시작: `./start.sh restart`
+
+기본적인 도움은 계속 제공할 수 있습니다. 구체적인 질문을 해주세요!"""
     
-    async def _generate_dummy_embedding(self, text: str) -> List[float]:
-        """더미 임베딩 생성"""
+    async def _generate_fallback_embedding(self, text: str) -> List[float]:
+        """기본 폴백 임베딩"""
         
         await asyncio.sleep(0.1)
         
-        # 텍스트 기반의 의사 랜덤 임베딩 생성
+        # 간단한 해시 기반 임베딩
         import hashlib
         hash_obj = hashlib.md5(text.encode())
         hash_hex = hash_obj.hexdigest()
         
-        # 1024차원 임베딩 생성
         embedding = []
         for i in range(0, len(hash_hex), 2):
-            # 16진수를 -1~1 범위의 float로 변환
             val = int(hash_hex[i:i+2], 16) / 255.0 * 2 - 1
             embedding.append(val)
         
-        # 1024차원까지 확장
         while len(embedding) < 1024:
             embedding.extend(embedding[:min(16, 1024 - len(embedding))])
         
         return embedding[:1024]
     
+    def _update_performance_stats(self, response_time: float):
+        """성능 통계 업데이트"""
+        
+        # 이동 평균으로 응답 시간 계산
+        alpha = 0.1  # 평활화 계수
+        if self.performance_stats['average_response_time'] == 0:
+            self.performance_stats['average_response_time'] = response_time
+        else:
+            self.performance_stats['average_response_time'] = (
+                alpha * response_time + 
+                (1 - alpha) * self.performance_stats['average_response_time']
+            )
+    
     # 유틸리티 메서드들
     
     def is_model_loaded(self) -> bool:
-        """모델 로딩 상태 확인"""
+        """실제 모델 로딩 상태 확인"""
         return self.main_model is not None
     
     def is_embedding_model_loaded(self) -> bool:
         """임베딩 모델 로딩 상태 확인"""
         return self.embedding_model is not None
     
+    def get_mode(self) -> str:
+        """현재 모드 반환"""
+        return self.mode
+    
     def get_model_info(self) -> Dict[str, Any]:
         """모델 정보 반환"""
         return {
+            "mode": self.mode,
             "main_model": {
                 "loaded": self.is_model_loaded(),
-                "name": settings.llm.main_model.name if settings.llm else "none",
-                "path": settings.llm.main_model.path if settings.llm else "none",
+                "name": settings.llm.main_model.name if (settings.llm and hasattr(settings.llm, 'main_model')) else "none",
+                "path": settings.llm.main_model.path if (settings.llm and hasattr(settings.llm, 'main_model')) else "none",
                 "device": self.device
             },
             "embedding_model": {
                 "loaded": self.is_embedding_model_loaded(),
-                "name": settings.llm.embedding_model.name if settings.llm else "none", 
-                "path": settings.llm.embedding_model.path if settings.llm else "none",
+                "name": settings.llm.embedding_model.name if (settings.llm and hasattr(settings.llm, 'embedding_model')) else "none",
+                "path": settings.llm.embedding_model.path if (settings.llm and hasattr(settings.llm, 'embedding_model')) else "none",
                 "device": self.device
             },
             "hardware": {
@@ -511,8 +609,26 @@ def example_function():
                 "gpu_available": self.device == "cuda",
                 "memory_gb": self.hardware_info["memory"]["total_gb"],
                 "recommended_settings": self.recommended_settings
-            }
+            },
+            "performance": self.performance_stats,
+            "dummy_mode_available": DUMMY_MODE_AVAILABLE and self.dummy_llm is not None
         }
+    
+    def get_performance_stats(self) -> Dict[str, Any]:
+        """성능 통계 반환"""
+        stats = self.performance_stats.copy()
+        
+        # 추가 계산된 메트릭
+        if stats['total_requests'] > 0:
+            stats['dummy_mode_ratio'] = stats['dummy_requests'] / stats['total_requests']
+            stats['real_mode_ratio'] = stats['real_requests'] / stats['total_requests'] 
+            stats['error_rate'] = stats['error_count'] / stats['total_requests']
+        else:
+            stats['dummy_mode_ratio'] = 0.0
+            stats['real_mode_ratio'] = 0.0
+            stats['error_rate'] = 0.0
+        
+        return stats
     
     async def reload_models(self):
         """모델 재로딩"""
@@ -531,13 +647,78 @@ def example_function():
         if HAS_TORCH and torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        # 모델 재로딩
-        await self._initialize_models()
+        # 재초기화
+        await self._initialize_system()
         
         logger.success("모델 재로딩 완료")
     
+    async def switch_to_dummy_mode(self):
+        """더미 모드로 강제 전환"""
+        logger.info("더미 모드로 전환 중...")
+        
+        # 실제 모델 언로드
+        if self.main_model:
+            del self.main_model
+            self.main_model = None
+        
+        if self.embedding_model:
+            del self.embedding_model
+            self.embedding_model = None
+        
+        # GPU 메모리 정리
+        if HAS_TORCH and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # 더미 모드 활성화
+        await self._initialize_dummy_mode()
+        self.mode = "dummy"
+        
+        logger.success("더미 모드로 전환 완료")
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """헬스 체크"""
+        
+        health = {
+            "status": "healthy",
+            "mode": self.mode,
+            "timestamp": time.time(),
+            "components": {}
+        }
+        
+        # 메인 모델 상태
+        if self.is_model_loaded():
+            health["components"]["main_model"] = "healthy"
+        elif self.mode == "dummy":
+            health["components"]["main_model"] = "dummy_mode"
+        else:
+            health["components"]["main_model"] = "not_loaded"
+        
+        # 임베딩 모델 상태
+        if self.is_embedding_model_loaded():
+            health["components"]["embedding_model"] = "healthy"
+        elif self.dummy_llm:
+            health["components"]["embedding_model"] = "dummy_mode"
+        else:
+            health["components"]["embedding_model"] = "not_loaded"
+        
+        # 더미 모드 상태
+        if self.dummy_llm:
+            health["components"]["dummy_mode"] = "available"
+        else:
+            health["components"]["dummy_mode"] = "not_available"
+        
+        # 전체 상태 결정
+        if self.mode == "error":
+            health["status"] = "unhealthy"
+        elif self.mode == "basic":
+            health["status"] = "degraded"
+        elif self.mode == "dummy":
+            health["status"] = "limited"
+        
+        return health
+    
     def __del__(self):
-        """소멸자 - 리소스 정리"""
+        """소멸자"""
         if hasattr(self, 'executor'):
             self.executor.shutdown(wait=True)
         
@@ -545,14 +726,19 @@ def example_function():
             torch.cuda.empty_cache()
 
 
-# 전역 LLM 관리자 인스턴스 (싱글톤 패턴)
-_llm_manager_instance = None
+# 전역 Enhanced LLM 관리자 인스턴스
+_enhanced_llm_manager_instance = None
 
-def get_llm_manager() -> LLMManager:
-    """전역 LLM 관리자 인스턴스 반환"""
-    global _llm_manager_instance
+def get_enhanced_llm_manager() -> EnhancedLLMManager:
+    """전역 Enhanced LLM 관리자 인스턴스 반환"""
+    global _enhanced_llm_manager_instance
     
-    if _llm_manager_instance is None:
-        _llm_manager_instance = LLMManager()
+    if _enhanced_llm_manager_instance is None:
+        _enhanced_llm_manager_instance = EnhancedLLMManager()
     
-    return _llm_manager_instance
+    return _enhanced_llm_manager_instance
+
+# 하위 호환성을 위한 별칭
+def get_llm_manager() -> EnhancedLLMManager:
+    """하위 호환성을 위한 별칭"""
+    return get_enhanced_llm_manager()

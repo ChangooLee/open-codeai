@@ -1,32 +1,20 @@
 """
-Open CodeAI - 코드 분석기 구현
-Tree-sitter를 사용한 코드 파싱 및 분석
+Open CodeAI - Tree-sitter 대안 코드 분석기
+Python AST + 정규식 기반의 강력한 코드 분석 시스템
 """
 import ast
-import os
 import re
 import json
-from typing import Dict, List, Any, Optional, Tuple, Set
+import os
+from typing import Dict, List, Any, Optional, Tuple, Set, Union
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from enum import Enum
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
-try:
-    import tree_sitter
-    from tree_sitter import Language, Parser
-    HAS_TREE_SITTER = True
-except ImportError:
-    HAS_TREE_SITTER = False
-
-from ..config import settings
-from ..utils.logger import get_logger, log_performance
-
-logger = get_logger(__name__)
-
-class CodeLanguage(Enum):
-    """지원하는 프로그래밍 언어"""
+class Language(Enum):
+    """지원하는 언어"""
     PYTHON = "python"
     JAVASCRIPT = "javascript"
     TYPESCRIPT = "typescript"
@@ -37,449 +25,683 @@ class CodeLanguage(Enum):
     RUST = "rust"
     PHP = "php"
     RUBY = "ruby"
-    SCALA = "scala"
-    KOTLIN = "kotlin"
 
 @dataclass
-class FunctionInfo:
-    """함수 정보"""
+class CodeElement:
+    """코드 요소 기본 클래스"""
     name: str
     start_line: int
     end_line: int
-    parameters: List[str]
+    element_type: str
+    content: str
+    language: str
+    metadata: Dict[str, Any] = None
+
+@dataclass 
+class FunctionElement(CodeElement):
+    """함수 요소"""
+    parameters: List[str] = None
     return_type: Optional[str] = None
     docstring: Optional[str] = None
     complexity: int = 1
     is_async: bool = False
     decorators: List[str] = None
+    calls: List[str] = None  # 호출하는 함수들
 
 @dataclass
-class ClassInfo:
-    """클래스 정보"""
-    name: str
-    start_line: int
-    end_line: int
-    methods: List[FunctionInfo]
-    attributes: List[str]
+class ClassElement(CodeElement):
+    """클래스 요소"""
+    methods: List[FunctionElement] = None
+    attributes: List[str] = None
     inheritance: List[str] = None
     docstring: Optional[str] = None
+    is_abstract: bool = False
 
 @dataclass
-class ImportInfo:
-    """임포트 정보"""
+class ImportElement(CodeElement):
+    """임포트 요소"""
     module: str
     alias: Optional[str] = None
     items: List[str] = None
     is_from_import: bool = False
 
-@dataclass
-class CodeAnalysisResult:
-    """코드 분석 결과"""
-    language: str
-    file_path: Optional[str] = None
-    
-    # 구조 정보
-    functions: List[FunctionInfo] = None
-    classes: List[ClassInfo] = None
-    imports: List[ImportInfo] = None
-    
-    # 메트릭
-    lines_of_code: int = 0
-    comment_lines: int = 0
-    blank_lines: int = 0
-    complexity: int = 0
-    
-    # 품질 지표
-    test_coverage_estimate: float = 0.0
-    maintainability_index: float = 0.0
-    code_smells: List[str] = None
-    
-    # 의존성
-    dependencies: Set[str] = None
-    exports: List[str] = None
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """딕셔너리로 변환"""
-        result = asdict(self)
-        # Set을 list로 변환
-        if result.get('dependencies'):
-            result['dependencies'] = list(result['dependencies'])
-        return result
-
-class CodeAnalyzer:
-    """
-    코드 분석기
-    
-    - Tree-sitter를 사용한 구문 분석
-    - AST 기반 메트릭 계산
-    - 코드 품질 평가
-    - 의존성 분석
-    """
+class AlternativeCodeAnalyzer:
+    """Tree-sitter 대안 코드 분석기"""
     
     def __init__(self):
-        self.parsers = {}
         self.executor = ThreadPoolExecutor(max_workers=4)
-        
-        # Tree-sitter 언어 파서 초기화
-        if HAS_TREE_SITTER:
-            self._initialize_parsers()
-        else:
-            logger.warning("Tree-sitter가 설치되지 않았습니다. 기본 분석만 사용됩니다.")
+        self.language_patterns = self._initialize_patterns()
     
-    def _initialize_parsers(self):
-        """Tree-sitter 파서들 초기화"""
-        try:
-            # 언어별 파서 설정 (실제로는 빌드된 언어 파일이 필요)
-            language_configs = {
-                CodeLanguage.PYTHON: "tree-sitter-python",
-                CodeLanguage.JAVASCRIPT: "tree-sitter-javascript", 
-                CodeLanguage.TYPESCRIPT: "tree-sitter-typescript",
-                CodeLanguage.JAVA: "tree-sitter-java",
-                CodeLanguage.CPP: "tree-sitter-cpp",
-                CodeLanguage.C: "tree-sitter-c",
-                CodeLanguage.GO: "tree-sitter-go",
-                CodeLanguage.RUST: "tree-sitter-rust"
+    def _initialize_patterns(self) -> Dict[str, Dict[str, Any]]:
+        """언어별 패턴 초기화"""
+        return {
+            Language.PYTHON.value: {
+                'function': r'^\s*(async\s+)?def\s+(\w+)\s*\((.*?)\)(?:\s*->\s*([^:]+))?\s*:',
+                'class': r'^\s*class\s+(\w+)(?:\([^)]*\))?\s*:',
+                'import': r'^\s*(?:from\s+([\w.]+)\s+)?import\s+(.+)',
+                'variable': r'^\s*(\w+)\s*=\s*(.+)',
+                'decorator': r'^\s*@(\w+(?:\.\w+)*)',
+                'comment': r'^\s*#.*',
+                'docstring': r'^\s*"""(.*?)"""',
+                'call': r'(\w+)\s*\(',
+            },
+            Language.JAVASCRIPT.value: {
+                'function': r'^\s*(?:async\s+)?(?:function\s+(\w+)|(\w+)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>))',
+                'class': r'^\s*class\s+(\w+)(?:\s+extends\s+(\w+))?\s*{',
+                'import': r'^\s*(?:import\s+(?:{([^}]+)}|(\w+))\s+from\s+[\'"]([^\'"]+)[\'"]|import\s+[\'"]([^\'"]+)[\'"])',
+                'variable': r'^\s*(?:const|let|var)\s+(\w+)\s*=',
+                'comment': r'^\s*//.*',
+                'call': r'(\w+)\s*\(',
+            },
+            Language.TYPESCRIPT.value: {
+                'function': r'^\s*(?:async\s+)?(?:function\s+(\w+)|(\w+)\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>))',
+                'class': r'^\s*(?:export\s+)?(?:abstract\s+)?class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?\s*{',
+                'interface': r'^\s*(?:export\s+)?interface\s+(\w+)(?:\s+extends\s+([^{]+))?\s*{',
+                'import': r'^\s*import\s+(?:{([^}]+)}|(\w+))\s+from\s+[\'"]([^\'"]+)[\'"]',
+                'type': r'^\s*(?:export\s+)?type\s+(\w+)\s*=',
+                'variable': r'^\s*(?:const|let|var)\s+(\w+)(?:\s*:\s*([^=]+))?\s*=',
+                'comment': r'^\s*//.*',
+                'call': r'(\w+)\s*\(',
+            },
+            Language.JAVA.value: {
+                'function': r'^\s*(?:public|private|protected)?\s*(?:static)?\s*(?:final)?\s*(?:abstract)?\s*(\w+|\w+<[^>]+>)\s+(\w+)\s*\([^)]*\)',
+                'class': r'^\s*(?:public|private|protected)?\s*(?:abstract|final)?\s*class\s+(\w+)(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?\s*{',
+                'interface': r'^\s*(?:public|private|protected)?\s*interface\s+(\w+)(?:\s+extends\s+([^{]+))?\s*{',
+                'import': r'^\s*import\s+(static\s+)?([^;]+);',
+                'variable': r'^\s*(?:public|private|protected)?\s*(?:static)?\s*(?:final)?\s*(\w+(?:<[^>]+>)?)\s+(\w+)\s*[=;]',
+                'comment': r'^\s*//.*',
+                'call': r'(\w+)\s*\(',
+            },
+            Language.GO.value: {
+                'function': r'^\s*func\s+(?:\([^)]*\)\s+)?(\w+)\s*\([^)]*\)(?:\s*[^{]*)?{',
+                'struct': r'^\s*type\s+(\w+)\s+struct\s*{',
+                'interface': r'^\s*type\s+(\w+)\s+interface\s*{',
+                'import': r'^\s*import\s+(?:\(\s*([^)]+)\s*\)|"([^"]+)")',
+                'variable': r'^\s*(?:var\s+(\w+)|(\w+)\s*:=)',
+                'comment': r'^\s*//.*',
+                'call': r'(\w+)\s*\(',
+            },
+            Language.RUST.value: {
+                'function': r'^\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)(?:<[^>]*>)?\s*\([^)]*\)(?:\s*->\s*[^{]+)?\s*{',
+                'struct': r'^\s*(?:pub\s+)?struct\s+(\w+)(?:<[^>]*>)?\s*{',
+                'enum': r'^\s*(?:pub\s+)?enum\s+(\w+)(?:<[^>]*>)?\s*{',
+                'trait': r'^\s*(?:pub\s+)?trait\s+(\w+)(?:<[^>]*>)?\s*{',
+                'impl': r'^\s*impl(?:<[^>]*>)?\s+(?:(\w+)(?:<[^>]*>)?\s+for\s+)?(\w+)(?:<[^>]*>)?\s*{',
+                'use': r'^\s*use\s+([^;]+);',
+                'variable': r'^\s*let\s+(?:mut\s+)?(\w+)(?:\s*:\s*[^=]+)?\s*=',
+                'comment': r'^\s*//.*',
+                'call': r'(\w+)\s*\(',
             }
-            
-            for lang, lib_name in language_configs.items():
-                try:
-                    # 실제 구현에서는 빌드된 .so 파일을 로드해야 함
-                    # 여기서는 기본 파서로 대체
-                    parser = Parser()
-                    self.parsers[lang] = parser
-                    logger.info(f"{lang.value} 파서 초기화 완료")
-                except Exception as e:
-                    logger.warning(f"{lang.value} 파서 초기화 실패: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Tree-sitter 파서 초기화 실패: {e}")
+        }
     
-    async def analyze_code(
-        self, 
-        code: str, 
-        language: str = "python",
-        file_path: Optional[str] = None
-    ) -> CodeAnalysisResult:
-        """
-        코드 분석 실행
+    def detect_language(self, file_path: str) -> Language:
+        """파일 확장자로 언어 감지"""
+        extension = Path(file_path).suffix.lower()
         
-        Args:
-            code: 분석할 코드
-            language: 프로그래밍 언어
-            file_path: 파일 경로 (선택적)
-            
-        Returns:
-            분석 결과
-        """
+        extension_map = {
+            '.py': Language.PYTHON,
+            '.js': Language.JAVASCRIPT,
+            '.jsx': Language.JAVASCRIPT,
+            '.ts': Language.TYPESCRIPT,
+            '.tsx': Language.TYPESCRIPT,
+            '.java': Language.JAVA,
+            '.cpp': Language.CPP,
+            '.cc': Language.CPP,
+            '.cxx': Language.CPP,
+            '.c': Language.C,
+            '.go': Language.GO,
+            '.rs': Language.RUST,
+            '.php': Language.PHP,
+            '.rb': Language.RUBY,
+        }
         
+        return extension_map.get(extension, Language.PYTHON)
+    
+    async def analyze_file(self, file_path: str) -> Optional[Dict[str, Any]]:
+        """파일 분석"""
         try:
-            lang_enum = CodeLanguage(language)
-        except ValueError:
-            logger.warning(f"지원하지 않는 언어: {language}")
-            lang_enum = CodeLanguage.PYTHON
-        
-        logger.info(f"코드 분석 시작 - 언어: {language}, 길이: {len(code)} chars")
-        
-        # 비동기 분석 실행
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            self.executor,
-            self._analyze_code_sync,
-            code,
-            lang_enum,
-            file_path
-        )
-        
-        logger.info(f"코드 분석 완료 - 함수: {len(result.functions or [])}, 클래스: {len(result.classes or [])}")
-        return result
-    
-    @log_performance("code_analysis")
-    def _analyze_code_sync(
-        self,
-        code: str,
-        language: CodeLanguage,
-        file_path: Optional[str]
-    ) -> CodeAnalysisResult:
-        """동기 코드 분석"""
-        
-        result = CodeAnalysisResult(
-            language=language.value,
-            file_path=file_path,
-            functions=[],
-            classes=[],
-            imports=[],
-            code_smells=[],
-            dependencies=set()
-        )
-        
-        # 기본 메트릭 계산
-        result.lines_of_code, result.comment_lines, result.blank_lines = self._count_lines(code)
-        
-        # 언어별 분석
-        if language == CodeLanguage.PYTHON:
-            self._analyze_python(code, result)
-        elif language == CodeLanguage.JAVASCRIPT:
-            self._analyze_javascript(code, result)
-        elif language == CodeLanguage.TYPESCRIPT:
-            self._analyze_typescript(code, result)
-        else:
-            # 기본 분석 (패턴 매칭 기반)
-            self._analyze_generic(code, result)
-        
-        # 품질 지표 계산
-        result.complexity = self._calculate_complexity(result)
-        result.maintainability_index = self._calculate_maintainability(result)
-        result.test_coverage_estimate = self._estimate_test_coverage(code, result)
-        
-        return result
-    
-    def _count_lines(self, code: str) -> Tuple[int, int, int]:
-        """라인 수 계산 (코드, 주석, 빈 줄)"""
-        lines = code.split('\n')
-        
-        code_lines = 0
-        comment_lines = 0
-        blank_lines = 0
-        
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                blank_lines += 1
-            elif stripped.startswith('#') or stripped.startswith('//') or stripped.startswith('/*'):
-                comment_lines += 1
+            if not os.path.exists(file_path):
+                return None
+            
+            language = self.detect_language(file_path)
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            # 언어별 분석
+            if language == Language.PYTHON:
+                return await self._analyze_python_file(file_path, content)
             else:
-                code_lines += 1
-        
-        return code_lines, comment_lines, blank_lines
+                return await self._analyze_generic_file(file_path, content, language)
+                
+        except Exception as e:
+            print(f"파일 분석 오류 {file_path}: {e}")
+            return None
     
-    def _analyze_python(self, code: str, result: CodeAnalysisResult):
-        """Python 코드 분석"""
+    async def _analyze_python_file(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Python 파일 AST 기반 분석"""
+        
+        result = {
+            'file_path': file_path,
+            'language': Language.PYTHON.value,
+            'functions': [],
+            'classes': [],
+            'imports': [],
+            'variables': [],
+            'lines_of_code': 0,
+            'complexity': 0,
+            'dependencies': set(),
+            'exports': []
+        }
+        
+        # 기본 메트릭
+        lines = content.split('\n')
+        result['lines_of_code'] = len([line for line in lines if line.strip() and not line.strip().startswith('#')])
+        
         try:
-            tree = ast.parse(code)
+            # AST 파싱
+            tree = ast.parse(content)
             
-            # AST 방문자로 분석
-            visitor = PythonASTVisitor(result)
+            # AST 방문자 사용
+            visitor = PythonASTAnalyzer(result)
             visitor.visit(tree)
             
         except SyntaxError as e:
-            logger.warning(f"Python 구문 오류: {e}")
-            result.code_smells.append(f"구문 오류: {e}")
-        except Exception as e:
-            logger.error(f"Python 분석 실패: {e}")
+            # AST 파싱 실패 시 정규식 폴백
+            print(f"AST 파싱 실패, 정규식 사용: {e}")
+            await self._analyze_python_with_regex(content, result)
+        
+        # 의존성을 리스트로 변환
+        result['dependencies'] = list(result['dependencies'])
+        
+        return result
     
-    def _analyze_javascript(self, code: str, result: CodeAnalysisResult):
-        """JavaScript 코드 분석 (패턴 매칭 기반)"""
+    async def _analyze_python_with_regex(self, content: str, result: Dict[str, Any]):
+        """Python 정규식 기반 분석 (폴백)"""
         
-        # 함수 찾기
-        function_pattern = r'function\s+(\w+)\s*\([^)]*\)\s*\{'
-        matches = re.finditer(function_pattern, code)
+        lines = content.split('\n')
+        patterns = self.language_patterns[Language.PYTHON.value]
         
-        for match in matches:
-            func_name = match.group(1)
-            start_line = code[:match.start()].count('\n') + 1
-            
-            func_info = FunctionInfo(
-                name=func_name,
-                start_line=start_line,
-                end_line=start_line + 10,  # 추정
-                parameters=[]
-            )
-            result.functions.append(func_info)
-        
-        # 임포트 찾기
-        import_pattern = r'import\s+.*?from\s+[\'"]([^\'"]+)[\'"]'
-        matches = re.finditer(import_pattern, code)
-        
-        for match in matches:
-            module = match.group(1)
-            import_info = ImportInfo(
-                module=module,
-                is_from_import=True
-            )
-            result.imports.append(import_info)
-            result.dependencies.add(module)
-    
-    def _analyze_typescript(self, code: str, result: CodeAnalysisResult):
-        """TypeScript 코드 분석"""
-        # JavaScript 분석과 유사하지만 타입 정보 추가
-        self._analyze_javascript(code, result)
-        
-        # 인터페이스 찾기
-        interface_pattern = r'interface\s+(\w+)\s*\{'
-        matches = re.finditer(interface_pattern, code)
-        
-        for match in matches:
-            interface_name = match.group(1)
-            start_line = code[:match.start()].count('\n') + 1
-            
-            # 인터페이스를 클래스로 처리
-            class_info = ClassInfo(
-                name=interface_name,
-                start_line=start_line,
-                end_line=start_line + 5,
-                methods=[],
-                attributes=[]
-            )
-            result.classes.append(class_info)
-    
-    def _analyze_generic(self, code: str, result: CodeAnalysisResult):
-        """일반적인 코드 분석 (패턴 매칭)"""
-        
-        # 함수 패턴들
-        function_patterns = [
-            r'def\s+(\w+)\s*\(',  # Python
-            r'function\s+(\w+)\s*\(',  # JavaScript
-            r'(\w+)\s*\([^)]*\)\s*\{',  # C/Java style
-        ]
-        
-        for pattern in function_patterns:
-            matches = re.finditer(pattern, code)
-            for match in matches:
-                func_name = match.group(1)
-                start_line = code[:match.start()].count('\n') + 1
+        for i, line in enumerate(lines, 1):
+            # 함수 분석
+            func_match = re.match(patterns['function'], line)
+            if func_match:
+                is_async = bool(func_match.group(1))
+                func_name = func_match.group(2)
+                params_str = func_match.group(3) or ""
+                return_type = func_match.group(4)
                 
-                func_info = FunctionInfo(
+                # 함수 끝 찾기
+                end_line = self._find_python_block_end(lines, i-1)
+                
+                func_element = FunctionElement(
                     name=func_name,
-                    start_line=start_line,
-                    end_line=start_line + 1,
-                    parameters=[]
+                    start_line=i,
+                    end_line=end_line,
+                    element_type='function',
+                    content='\n'.join(lines[i-1:end_line]),
+                    language=Language.PYTHON.value,
+                    parameters=self._parse_python_params(params_str),
+                    return_type=return_type,
+                    is_async=is_async,
+                    complexity=1
                 )
-                result.functions.append(func_info)
-    
-    def _calculate_complexity(self, result: CodeAnalysisResult) -> int:
-        """코드 복잡도 계산"""
-        complexity = 1  # 기본 복잡도
-        
-        # 함수당 복잡도 추가
-        for func in result.functions or []:
-            complexity += func.complexity
-        
-        # 클래스당 복잡도 추가  
-        for cls in result.classes or []:
-            complexity += len(cls.methods) * 2
-        
-        return complexity
-    
-    def _calculate_maintainability(self, result: CodeAnalysisResult) -> float:
-        """유지보수성 지수 계산"""
-        
-        if result.lines_of_code == 0:
-            return 100.0
-        
-        # 간단한 유지보수성 지수 계산
-        comment_ratio = result.comment_lines / result.lines_of_code if result.lines_of_code > 0 else 0
-        complexity_penalty = min(result.complexity / 10, 1.0)
-        
-        maintainability = 100 - (complexity_penalty * 50) + (comment_ratio * 20)
-        return max(0.0, min(100.0, maintainability))
-    
-    def _estimate_test_coverage(self, code: str, result: CodeAnalysisResult) -> float:
-        """테스트 커버리지 추정"""
-        
-        # 테스트 관련 키워드 찾기
-        test_keywords = ['test_', 'test ', 'Test', 'describe', 'it(', '@Test']
-        test_score = 0
-        
-        for keyword in test_keywords:
-            test_score += code.count(keyword) * 10
-        
-        # 함수 대비 테스트 비율 추정
-        function_count = len(result.functions or [])
-        if function_count > 0:
-            estimated_coverage = min(test_score / function_count, 100.0)
-        else:
-            estimated_coverage = 0.0
-        
-        return estimated_coverage
-    
-    async def analyze_file(self, file_path: str) -> Optional[CodeAnalysisResult]:
-        """파일 분석"""
-        
-        try:
-            path = Path(file_path)
-            if not path.exists():
-                logger.error(f"파일을 찾을 수 없습니다: {file_path}")
-                return None
+                
+                result['functions'].append(asdict(func_element))
             
-            # 언어 감지
-            language = self._detect_language(path)
+            # 클래스 분석
+            class_match = re.match(patterns['class'], line)
+            if class_match:
+                class_name = class_match.group(1)
+                end_line = self._find_python_block_end(lines, i-1)
+                
+                class_element = ClassElement(
+                    name=class_name,
+                    start_line=i,
+                    end_line=end_line,
+                    element_type='class',
+                    content='\n'.join(lines[i-1:end_line]),
+                    language=Language.PYTHON.value,
+                    methods=[],
+                    attributes=[]
+                )
+                
+                result['classes'].append(asdict(class_element))
             
-            # 파일 읽기
-            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                code = f.read()
-            
-            # 분석 실행
-            result = await self.analyze_code(code, language, file_path)
-            return result
-            
-        except Exception as e:
-            logger.error(f"파일 분석 실패 {file_path}: {e}")
-            return None
+            # 임포트 분석
+            import_match = re.match(patterns['import'], line)
+            if import_match:
+                from_module = import_match.group(1)
+                import_items = import_match.group(2)
+                
+                import_element = ImportElement(
+                    name=import_items.strip(),
+                    start_line=i,
+                    end_line=i,
+                    element_type='import',
+                    content=line.strip(),
+                    language=Language.PYTHON.value,
+                    module=from_module or import_items.split('.')[0],
+                    is_from_import=bool(from_module)
+                )
+                
+                result['imports'].append(asdict(import_element))
+                result['dependencies'].add(from_module or import_items.split('.')[0])
     
-    def _detect_language(self, file_path: Path) -> str:
-        """파일 확장자로 언어 감지"""
+    def _find_python_block_end(self, lines: List[str], start_idx: int) -> int:
+        """Python 블록의 끝 찾기"""
+        if start_idx >= len(lines):
+            return start_idx + 1
+            
+        start_line = lines[start_idx]
+        base_indent = len(start_line) - len(start_line.lstrip())
         
-        extension_map = {
-            '.py': 'python',
-            '.js': 'javascript',
-            '.ts': 'typescript',
-            '.tsx': 'typescript',
-            '.jsx': 'javascript',
-            '.java': 'java',
-            '.cpp': 'cpp',
-            '.cc': 'cpp',
-            '.cxx': 'cpp',
-            '.c': 'c',
-            '.go': 'go',
-            '.rs': 'rust',
-            '.php': 'php',
-            '.rb': 'ruby',
-            '.scala': 'scala',
-            '.kt': 'kotlin'
+        for i in range(start_idx + 1, len(lines)):
+            line = lines[i]
+            if not line.strip():  # 빈 줄은 건너뛰기
+                continue
+                
+            current_indent = len(line) - len(line.lstrip())
+            
+            # 들여쓰기가 기본 레벨보다 작거나 같으면 블록 끝
+            if current_indent <= base_indent and line.strip():
+                return i
+        
+        return len(lines)
+    
+    def _parse_python_params(self, params_str: str) -> List[str]:
+        """Python 함수 파라미터 파싱"""
+        if not params_str.strip():
+            return []
+        
+        params = []
+        for param in params_str.split(','):
+            param = param.strip()
+            if param and param != 'self':
+                # 타입 힌트 제거
+                if ':' in param:
+                    param = param.split(':')[0].strip()
+                # 기본값 제거
+                if '=' in param:
+                    param = param.split('=')[0].strip()
+                params.append(param)
+        
+        return params
+    
+    async def _analyze_generic_file(self, file_path: str, content: str, language: Language) -> Dict[str, Any]:
+        """일반적인 파일 정규식 기반 분석"""
+        
+        result = {
+            'file_path': file_path,
+            'language': language.value,
+            'functions': [],
+            'classes': [],
+            'imports': [],
+            'variables': [],
+            'lines_of_code': 0,
+            'complexity': 0,
+            'dependencies': set(),
+            'exports': []
         }
         
-        return extension_map.get(file_path.suffix.lower(), 'python')
+        lines = content.split('\n')
+        result['lines_of_code'] = len([line for line in lines if line.strip() and not line.strip().startswith(('//','#','/*'))])
+        
+        patterns = self.language_patterns.get(language.value, {})
+        
+        for i, line in enumerate(lines, 1):
+            # 함수 분석
+            if 'function' in patterns:
+                func_match = re.match(patterns['function'], line)
+                if func_match:
+                    func_name = self._extract_function_name(func_match, language)
+                    if func_name:
+                        end_line = self._find_block_end(lines, i-1, language)
+                        
+                        func_element = FunctionElement(
+                            name=func_name,
+                            start_line=i,
+                            end_line=end_line,
+                            element_type='function',
+                            content='\n'.join(lines[i-1:end_line]),
+                            language=language.value,
+                            parameters=self._extract_parameters(line, language),
+                            complexity=1
+                        )
+                        
+                        result['functions'].append(asdict(func_element))
+            
+            # 클래스/구조체 분석
+            class_patterns = ['class', 'struct', 'interface']
+            for pattern_name in class_patterns:
+                if pattern_name in patterns:
+                    class_match = re.match(patterns[pattern_name], line)
+                    if class_match:
+                        class_name = class_match.group(1)
+                        end_line = self._find_block_end(lines, i-1, language)
+                        
+                        class_element = ClassElement(
+                            name=class_name,
+                            start_line=i,
+                            end_line=end_line,
+                            element_type=pattern_name,
+                            content='\n'.join(lines[i-1:end_line]),
+                            language=language.value,
+                            methods=[],
+                            attributes=[]
+                        )
+                        
+                        result['classes'].append(asdict(class_element))
+            
+            # 임포트 분석
+            import_patterns = ['import', 'use', '#include']
+            for pattern_name in import_patterns:
+                if pattern_name in patterns:
+                    import_match = re.match(patterns[pattern_name], line)
+                    if import_match:
+                        import_info = self._extract_import_info(import_match, language)
+                        if import_info:
+                            import_element = ImportElement(
+                                name=import_info['name'],
+                                start_line=i,
+                                end_line=i,
+                                element_type='import',
+                                content=line.strip(),
+                                language=language.value,
+                                module=import_info['module'],
+                                is_from_import=import_info.get('is_from', False)
+                            )
+                            
+                            result['imports'].append(asdict(import_element))
+                            result['dependencies'].add(import_info['module'])
+        
+        result['dependencies'] = list(result['dependencies'])
+        return result
     
-    async def analyze_directory(
-        self, 
-        directory_path: str,
-        max_files: int = 1000
-    ) -> List[CodeAnalysisResult]:
+    def _extract_function_name(self, match, language: Language) -> Optional[str]:
+        """정규식 매치에서 함수명 추출"""
+        
+        if language == Language.JAVASCRIPT or language == Language.TYPESCRIPT:
+            # function name() 또는 name = function() 패턴
+            return match.group(1) or match.group(2)
+        elif language == Language.JAVA:
+            return match.group(2)
+        elif language == Language.GO or language == Language.RUST:
+            return match.group(1)
+        else:
+            return match.group(1) if match.groups() else None
+    
+    def _extract_parameters(self, line: str, language: Language) -> List[str]:
+        """함수 파라미터 추출"""
+        
+        # 괄호 안의 내용 추출
+        paren_match = re.search(r'\(([^)]*)\)', line)
+        if not paren_match:
+            return []
+        
+        params_str = paren_match.group(1).strip()
+        if not params_str:
+            return []
+        
+        params = []
+        for param in params_str.split(','):
+            param = param.strip()
+            if param:
+                # 언어별 파라미터 정리
+                if language == Language.PYTHON:
+                    if ':' in param:
+                        param = param.split(':')[0].strip()
+                elif language in [Language.JAVASCRIPT, Language.TYPESCRIPT]:
+                    if ':' in param:
+                        param = param.split(':')[0].strip()
+                elif language == Language.JAVA:
+                    # 타입 제거 (타입 이름 순서)
+                    parts = param.split()
+                    if len(parts) >= 2:
+                        param = parts[-1]  # 마지막이 변수명
+                
+                if param and param not in ['self', 'this']:
+                    params.append(param)
+        
+        return params
+    
+    def _extract_import_info(self, match, language: Language) -> Optional[Dict[str, Any]]:
+        """임포트 정보 추출"""
+        
+        if language == Language.PYTHON:
+            # 이미 Python용으로 처리됨
+            return None
+        elif language in [Language.JAVASCRIPT, Language.TYPESCRIPT]:
+            # import { items } from 'module' 또는 import module from 'module'
+            items = match.group(1)
+            module_name = match.group(2) or match.group(3)
+            
+            return {
+                'name': items or module_name,
+                'module': module_name,
+                'is_from': bool(items)
+            }
+        elif language == Language.JAVA:
+            # import package.Class;
+            import_path = match.group(2)
+            return {
+                'name': import_path.split('.')[-1],
+                'module': import_path,
+                'is_from': False
+            }
+        elif language == Language.GO:
+            # import "package" 또는 import ( ... )
+            package = match.group(1) or match.group(2)
+            return {
+                'name': package.split('/')[-1],
+                'module': package,
+                'is_from': False
+            }
+        elif language == Language.RUST:
+            # use std::collections::HashMap;
+            use_path = match.group(1)
+            return {
+                'name': use_path.split('::')[-1],
+                'module': use_path,
+                'is_from': False
+            }
+        
+        return None
+    
+    def _find_block_end(self, lines: List[str], start_idx: int, language: Language) -> int:
+        """블록의 끝 찾기 (언어별)"""
+        
+        if language == Language.PYTHON:
+            return self._find_python_block_end(lines, start_idx)
+        
+        # 중괄호 기반 언어들
+        if language in [Language.JAVASCRIPT, Language.TYPESCRIPT, Language.JAVA, 
+                       Language.CPP, Language.C, Language.GO, Language.RUST]:
+            return self._find_brace_block_end(lines, start_idx)
+        
+        # 기본: 빈 줄까지
+        for i in range(start_idx + 1, len(lines)):
+            if not lines[i].strip():
+                return i
+        
+        return len(lines)
+    
+    def _find_brace_block_end(self, lines: List[str], start_idx: int) -> int:
+        """중괄호 기반 블록 끝 찾기"""
+        
+        brace_count = 0
+        found_opening = False
+        
+        for i in range(start_idx, len(lines)):
+            line = lines[i]
+            
+            for char in line:
+                if char == '{':
+                    brace_count += 1
+                    found_opening = True
+                elif char == '}':
+                    brace_count -= 1
+                    
+                    if found_opening and brace_count == 0:
+                        return i + 1
+        
+        return len(lines)
+    
+    async def analyze_directory(self, directory_path: str, max_files: int = 1000) -> Dict[str, Any]:
         """디렉토리 전체 분석"""
         
         try:
-            path = Path(directory_path)
-            if not path.exists():
-                logger.error(f"디렉토리를 찾을 수 없습니다: {directory_path}")
-                return []
+            directory = Path(directory_path)
+            if not directory.exists():
+                return {'error': f'Directory not found: {directory_path}'}
             
             # 지원하는 파일 확장자
-            supported_extensions = {'.py', '.js', '.ts', '.java', '.cpp', '.c', '.go', '.rs', '.php', '.rb'}
+            extensions = ['.py', '.js', '.ts', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rs', '.php', '.rb']
             
-            # 파일 목록 수집
+            # 파일 수집
             files = []
-            for ext in supported_extensions:
-                files.extend(list(path.rglob(f'*{ext}'))[:max_files])
+            for ext in extensions:
+                pattern = f"**/*{ext}"
+                found_files = list(directory.glob(pattern))
+                files.extend(found_files)
             
-            logger.info(f"디렉토리 분석 완료: {len(valid_results)} 파일 성공")
-            return valid_results
+            # 제외할 디렉토리
+            exclude_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build'}
+            files = [f for f in files if not any(part in exclude_dirs for part in f.parts)]
+            
+            if max_files:
+                files = files[:max_files]
+            
+            print(f"분석할 파일: {len(files)}개")
+            
+            # 병렬 분석
+            tasks = []
+            semaphore = asyncio.Semaphore(8)  # 동시 처리 제한
+            
+            async def analyze_with_semaphore(file_path):
+                async with semaphore:
+                    return await self.analyze_file(str(file_path))
+            
+            for file_path in files:
+                task = asyncio.create_task(analyze_with_semaphore(file_path))
+                tasks.append(task)
+            
+            # 결과 수집
+            results = []
+            for i, task in enumerate(asyncio.as_completed(tasks)):
+                try:
+                    result = await task
+                    if result:
+                        results.append(result)
+                    
+                    if (i + 1) % 50 == 0:
+                        print(f"진행상황: {i + 1}/{len(files)} 파일 분석 완료")
+                        
+                except Exception as e:
+                    print(f"파일 분석 오류: {e}")
+                    continue
+            
+            # 통계 생성
+            stats = self._generate_analysis_stats(results)
+            
+            return {
+                'directory': str(directory),
+                'total_files': len(files),
+                'analyzed_files': len(results),
+                'statistics': stats,
+                'files': results
+            }
             
         except Exception as e:
-            logger.error(f"디렉토리 분석 실패 {directory_path}: {e}")
-            return []
-
-class PythonASTVisitor(ast.NodeVisitor):
-    """Python AST 방문자"""
+            return {'error': f'Directory analysis failed: {str(e)}'}
     
-    def __init__(self, result: CodeAnalysisResult):
+    def _generate_analysis_stats(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """분석 통계 생성"""
+        
+        stats = {
+            'languages': {},
+            'total_functions': 0,
+            'total_classes': 0,
+            'total_imports': 0,
+            'total_lines': 0,
+            'complexity_distribution': {'low': 0, 'medium': 0, 'high': 0},
+            'top_dependencies': {},
+            'file_types': {}
+        }
+        
+        for result in results:
+            language = result['language']
+            
+            # 언어별 통계
+            if language not in stats['languages']:
+                stats['languages'][language] = {
+                    'files': 0,
+                    'functions': 0,
+                    'classes': 0,
+                    'lines': 0
+                }
+            
+            stats['languages'][language]['files'] += 1
+            stats['languages'][language]['functions'] += len(result.get('functions', []))
+            stats['languages'][language]['classes'] += len(result.get('classes', []))
+            stats['languages'][language]['lines'] += result.get('lines_of_code', 0)
+            
+            # 전체 통계
+            stats['total_functions'] += len(result.get('functions', []))
+            stats['total_classes'] += len(result.get('classes', []))
+            stats['total_imports'] += len(result.get('imports', []))
+            stats['total_lines'] += result.get('lines_of_code', 0)
+            
+            # 복잡도 분포
+            complexity = result.get('complexity', 0)
+            if complexity < 5:
+                stats['complexity_distribution']['low'] += 1
+            elif complexity < 15:
+                stats['complexity_distribution']['medium'] += 1
+            else:
+                stats['complexity_distribution']['high'] += 1
+            
+            # 의존성 통계
+            for dep in result.get('dependencies', []):
+                stats['top_dependencies'][dep] = stats['top_dependencies'].get(dep, 0) + 1
+            
+            # 파일 타입 통계
+            file_ext = Path(result['file_path']).suffix
+            stats['file_types'][file_ext] = stats['file_types'].get(file_ext, 0) + 1
+        
+        # 상위 의존성 정렬
+        stats['top_dependencies'] = dict(
+            sorted(stats['top_dependencies'].items(), key=lambda x: x[1], reverse=True)[:10]
+        )
+        
+        return stats
+
+class PythonASTAnalyzer(ast.NodeVisitor):
+    """Python AST 전용 분석기"""
+    
+    def __init__(self, result: Dict[str, Any]):
         self.result = result
         self.current_class = None
+        self.function_calls = []
     
     def visit_FunctionDef(self, node: ast.FunctionDef):
         """함수 정의 방문"""
+        self._process_function(node, is_async=False)
+        self.generic_visit(node)
+    
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        """비동기 함수 정의 방문"""
+        self._process_function(node, is_async=True)
+        self.generic_visit(node)
+    
+    def _process_function(self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], is_async: bool):
+        """함수 처리"""
         
         # 파라미터 추출
-        parameters = [arg.arg for arg in node.args.args]
+        parameters = []
+        for arg in node.args.args:
+            if arg.arg != 'self':
+                parameters.append(arg.arg)
         
         # 반환 타입 추출
         return_type = None
@@ -494,34 +716,44 @@ class PythonASTVisitor(ast.NodeVisitor):
             docstring = node.body[0].value.value
         
         # 데코레이터 추출
-        decorators = [ast.unparse(dec) if hasattr(ast, 'unparse') else str(dec) 
-                     for dec in node.decorator_list]
+        decorators = []
+        for decorator in node.decorator_list:
+            if hasattr(ast, 'unparse'):
+                decorators.append(ast.unparse(decorator))
+            else:
+                # Python 3.8 이하 호환성
+                if isinstance(decorator, ast.Name):
+                    decorators.append(decorator.id)
+                elif isinstance(decorator, ast.Attribute):
+                    decorators.append(f"{decorator.value.id}.{decorator.attr}")
         
-        # 복잡도 계산 (간단한 버전)
-        complexity = self._calculate_function_complexity(node)
+        # 함수 호출 추출
+        call_visitor = FunctionCallVisitor()
+        call_visitor.visit(node)
         
-        func_info = FunctionInfo(
+        # 복잡도 계산
+        complexity = self._calculate_complexity(node)
+        
+        func_element = FunctionElement(
             name=node.name,
             start_line=node.lineno,
             end_line=node.end_lineno or node.lineno,
+            element_type='function',
+            content='',  # 필요시 나중에 채움
+            language=Language.PYTHON.value,
             parameters=parameters,
             return_type=return_type,
             docstring=docstring,
             complexity=complexity,
-            is_async=isinstance(node, ast.AsyncFunctionDef),
-            decorators=decorators
+            is_async=is_async,
+            decorators=decorators,
+            calls=call_visitor.calls
         )
         
         if self.current_class:
-            self.current_class.methods.append(func_info)
+            self.current_class['methods'].append(asdict(func_element))
         else:
-            self.result.functions.append(func_info)
-        
-        self.generic_visit(node)
-    
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-        """비동기 함수 정의 방문"""
-        self.visit_FunctionDef(node)
+            self.result['functions'].append(asdict(func_element))
     
     def visit_ClassDef(self, node: ast.ClassDef):
         """클래스 정의 방문"""
@@ -532,7 +764,8 @@ class PythonASTVisitor(ast.NodeVisitor):
             if isinstance(base, ast.Name):
                 inheritance.append(base.id)
             elif isinstance(base, ast.Attribute):
-                inheritance.append(f"{base.value.id}.{base.attr}" if hasattr(base.value, 'id') else str(base.attr))
+                # module.Class 형태
+                inheritance.append(f"{base.value.id}.{base.attr}" if hasattr(base.value, 'id') else base.attr)
         
         # 독스트링 추출
         docstring = None
@@ -541,65 +774,82 @@ class PythonASTVisitor(ast.NodeVisitor):
             isinstance(node.body[0].value.value, str)):
             docstring = node.body[0].value.value
         
-        # 속성 추출 (간단한 버전)
-        attributes = []
-        for item in node.body:
-            if isinstance(item, ast.Assign):
-                for target in item.targets:
-                    if isinstance(target, ast.Name):
-                        attributes.append(target.id)
-        
-        class_info = ClassInfo(
+        class_element = ClassElement(
             name=node.name,
             start_line=node.lineno,
             end_line=node.end_lineno or node.lineno,
+            element_type='class',
+            content='',
+            language=Language.PYTHON.value,
             methods=[],
-            attributes=attributes,
+            attributes=[],
             inheritance=inheritance,
             docstring=docstring
         )
         
-        # 현재 클래스 설정하고 메서드들 방문
+        # 현재 클래스 설정
         old_class = self.current_class
-        self.current_class = class_info
-        self.generic_visit(node)
-        self.current_class = old_class
+        self.current_class = asdict(class_element)
         
-        self.result.classes.append(class_info)
+        # 클래스 내부 방문
+        self.generic_visit(node)
+        
+        # 속성 추출
+        attr_visitor = AttributeVisitor()
+        attr_visitor.visit(node)
+        self.current_class['attributes'] = attr_visitor.attributes
+        
+        self.result['classes'].append(self.current_class)
+        self.current_class = old_class
     
     def visit_Import(self, node: ast.Import):
-        """임포트 방문"""
+        """import 방문"""
         for alias in node.names:
-            import_info = ImportInfo(
+            import_element = ImportElement(
+                name=alias.name,
+                start_line=node.lineno,
+                end_line=node.lineno,
+                element_type='import',
+                content=f"import {alias.name}" + (f" as {alias.asname}" if alias.asname else ""),
+                language=Language.PYTHON.value,
                 module=alias.name,
                 alias=alias.asname,
                 is_from_import=False
             )
-            self.result.imports.append(import_info)
-            self.result.dependencies.add(alias.name.split('.')[0])
+            
+            self.result['imports'].append(asdict(import_element))
+            self.result['dependencies'].add(alias.name.split('.')[0])
         
         self.generic_visit(node)
     
     def visit_ImportFrom(self, node: ast.ImportFrom):
-        """from 임포트 방문"""
+        """from import 방문"""
         if node.module:
             items = [alias.name for alias in node.names]
-            import_info = ImportInfo(
+            
+            import_element = ImportElement(
+                name=', '.join(items),
+                start_line=node.lineno,
+                end_line=node.lineno,
+                element_type='import',
+                content=f"from {node.module} import {', '.join(items)}",
+                language=Language.PYTHON.value,
                 module=node.module,
                 items=items,
                 is_from_import=True
             )
-            self.result.imports.append(import_info)
-            self.result.dependencies.add(node.module.split('.')[0])
+            
+            self.result['imports'].append(asdict(import_element))
+            self.result['dependencies'].add(node.module.split('.')[0])
         
         self.generic_visit(node)
     
-    def _calculate_function_complexity(self, node: ast.FunctionDef) -> int:
-        """함수의 순환 복잡도 계산"""
+    def _calculate_complexity(self, node: ast.FunctionDef) -> int:
+        """함수 복잡도 계산 (순환 복잡도)"""
         complexity = 1  # 기본 복잡도
         
         for child in ast.walk(node):
-            # 분기문들
+            # 분기문
             if isinstance(child, (ast.If, ast.While, ast.For, ast.AsyncFor)):
                 complexity += 1
             # 예외 처리
@@ -608,178 +858,62 @@ class PythonASTVisitor(ast.NodeVisitor):
             # 논리 연산자
             elif isinstance(child, ast.BoolOp):
                 complexity += len(child.values) - 1
+            # 조건 표현식
+            elif isinstance(child, ast.IfExp):
+                complexity += 1
         
         return complexity
 
-# 코드 품질 검사기
-class CodeQualityChecker:
-    """코드 품질 검사"""
+class FunctionCallVisitor(ast.NodeVisitor):
+    """함수 호출 추출 방문자"""
     
-    @staticmethod
-    def check_python_smells(code: str) -> List[str]:
-        """Python 코드 스멜 검사"""
-        smells = []
+    def __init__(self):
+        self.calls = []
+    
+    def visit_Call(self, node: ast.Call):
+        """함수 호출 방문"""
+        if isinstance(node.func, ast.Name):
+            self.calls.append(node.func.id)
+        elif isinstance(node.func, ast.Attribute):
+            self.calls.append(node.func.attr)
         
-        # 긴 함수 검사
-        if 'def ' in code:
-            functions = re.findall(r'def\s+\w+.*?(?=\ndef|\nclass|\Z)', code, re.DOTALL)
-            for func in functions:
-                lines = len(func.split('\n'))
-                if lines > 50:
-                    smells.append(f"긴 함수 발견 ({lines} 줄)")
-        
-        # 깊은 중첩 검사
-        max_indent = 0
-        for line in code.split('\n'):
-            indent = len(line) - len(line.lstrip())
-            if indent > max_indent:
-                max_indent = indent
-        
-        if max_indent > 16:  # 4칸 들여쓰기 기준 4단계 초과
-            smells.append(f"과도한 중첩 ({max_indent//4} 단계)")
-        
-        # 매직 넘버 검사
-        magic_numbers = re.findall(r'\b(?!0|1)\d{2,}\b', code)
-        if len(magic_numbers) > 5:
-            smells.append(f"매직 넘버 과다 사용 ({len(magic_numbers)}개)")
-        
-        # 긴 파라미터 목록 검사
-        long_params = re.findall(r'def\s+\w+\([^)]{50,}\)', code)
-        if long_params:
-            smells.append(f"긴 파라미터 목록 ({len(long_params)}개 함수)")
-        
-        return smells
+        self.generic_visit(node)
 
-# 의존성 분석기
-class DependencyAnalyzer:
-    """의존성 분석기"""
+class AttributeVisitor(ast.NodeVisitor):
+    """클래스 속성 추출 방문자"""
     
-    @staticmethod
-    def analyze_python_dependencies(code: str) -> Dict[str, Any]:
-        """Python 의존성 분석"""
-        dependencies = {
-            'stdlib': set(),
-            'third_party': set(),
-            'local': set()
-        }
+    def __init__(self):
+        self.attributes = []
+    
+    def visit_Assign(self, node: ast.Assign):
+        """할당문 방문"""
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                self.attributes.append(target.id)
+            elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                if target.value.id == 'self':
+                    self.attributes.append(target.attr)
         
-        # 표준 라이브러리 목록 (일부)
-        stdlib_modules = {
-            'os', 'sys', 'json', 'time', 'datetime', 'collections', 
-            'itertools', 'functools', 'pathlib', 're', 'math', 'random',
-            'urllib', 'http', 'asyncio', 'threading', 'multiprocessing'
-        }
+        self.generic_visit(node)
+    
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        """타입 어노테이션 할당 방문"""
+        if isinstance(node.target, ast.Name):
+            self.attributes.append(node.target.id)
+        elif isinstance(node.target, ast.Attribute) and isinstance(node.target.value, ast.Name):
+            if node.target.value.id == 'self':
+                self.attributes.append(node.target.attr)
         
-        try:
-            tree = ast.parse(code)
-            
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        module = alias.name.split('.')[0]
-                        if module in stdlib_modules:
-                            dependencies['stdlib'].add(module)
-                        elif module.startswith('.'):
-                            dependencies['local'].add(module)
-                        else:
-                            dependencies['third_party'].add(module)
-                
-                elif isinstance(node, ast.ImportFrom) and node.module:
-                    module = node.module.split('.')[0]
-                    if node.level > 0:  # 상대 임포트
-                        dependencies['local'].add(node.module)
-                    elif module in stdlib_modules:
-                        dependencies['stdlib'].add(module)
-                    else:
-                        dependencies['third_party'].add(module)
-        
-        except SyntaxError:
-            pass
-        
-        return {k: list(v) for k, v in dependencies.items()}
+        self.generic_visit(node)
 
-# 코드 메트릭 계산기
-class CodeMetrics:
-    """코드 메트릭 계산"""
-    
-    @staticmethod
-    def calculate_halstead_metrics(code: str) -> Dict[str, float]:
-        """Halstead 복잡도 메트릭 계산"""
-        
-        # 연산자와 피연산자 패턴 (간단한 버전)
-        operators = re.findall(r'[+\-*/=<>!&|^%]|==|!=|<=|>=|and|or|not|in|is', code)
-        operands = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b|\b\d+\b', code)
-        
-        # 고유 연산자/피연산자 수
-        unique_operators = len(set(operators))
-        unique_operands = len(set(operands))
-        
-        # 전체 연산자/피연산자 수
-        total_operators = len(operators)
-        total_operands = len(operands)
-        
-        # Halstead 메트릭
-        vocabulary = unique_operators + unique_operands
-        length = total_operators + total_operands
-        
-        if unique_operators > 0 and unique_operands > 0:
-            volume = length * (vocabulary.bit_length() if vocabulary > 0 else 0)
-            difficulty = (unique_operators / 2) * (total_operands / unique_operands)
-            effort = difficulty * volume
-        else:
-            volume = difficulty = effort = 0
-        
-        return {
-            'vocabulary': vocabulary,
-            'length': length,
-            'volume': volume,
-            'difficulty': difficulty,
-            'effort': effort
-        }
-    
-    @staticmethod
-    def calculate_maintainability_index(
-        lines_of_code: int,
-        complexity: int,
-        halstead_volume: float
-    ) -> float:
-        """유지보수성 지수 계산 (Microsoft 공식)"""
-        
-        if lines_of_code == 0:
-            return 100.0
-        
-        import math
-        
-        # MI = 171 - 5.2 * ln(HV) - 0.23 * CC - 16.2 * ln(LOC)
-        try:
-            mi = (171 - 
-                  5.2 * math.log(max(halstead_volume, 1)) - 
-                  0.23 * complexity - 
-                  16.2 * math.log(max(lines_of_code, 1)))
-            
-            # 0-100 범위로 정규화
-            return max(0, min(100, mi))
-            
-        except (ValueError, ZeroDivisionError):
-            return 50.0  # 기본값
+# 전역 인스턴스
+_alternative_analyzer = None
 
-# 전역 코드 분석기 인스턴스
-_code_analyzer_instance = None
-
-def get_code_analyzer() -> CodeAnalyzer:
-    """전역 코드 분석기 인스턴스 반환"""
-    global _code_analyzer_instance
+def get_alternative_analyzer() -> AlternativeCodeAnalyzer:
+    """대안 코드 분석기 인스턴스 반환"""
+    global _alternative_analyzer
     
-    if _code_analyzer_instance is None:
-        _code_analyzer_instance = CodeAnalyzer()
+    if _alternative_analyzer is None:
+        _alternative_analyzer = AlternativeCodeAnalyzer()
     
-    return _code_analyzer_instance분석 시작: {len(files)} 파일")
-            
-            # 병렬 분석
-            tasks = [self.analyze_file(str(file_path)) for file_path in files]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            # 성공한 결과만 반환
-            valid_results = [r for r in results if isinstance(r, CodeAnalysisResult)]
-            
-            logger.info(f"디렉토리
+    return _alternative_analyzer
