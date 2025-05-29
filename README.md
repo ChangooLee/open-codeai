@@ -4,6 +4,76 @@
 
 ---
 
+## 🖥️ OS별 설치/실행 가이드
+
+### macOS
+
+1. **필수 도구 설치**
+   - [Homebrew](https://brew.sh/) 설치
+   - Python 3.10+ 설치: `brew install python`
+   - Docker Desktop 설치: [공식 다운로드](https://www.docker.com/products/docker-desktop/)
+2. **오프라인 패키지/모델 복사**
+   - `offline_packages/`, `data/models/` 폴더 복사
+3. **설치 및 실행**
+   ```bash
+   chmod +x install.sh
+   ./install.sh --offline
+   ./start.sh
+   ./index.sh /Users/yourname/Workspace/yourproject
+   ```
+4. **권한/보안 이슈**
+   - 실행 권한 부여: `chmod +x *.sh`
+   - 터미널에서 실행 권장 (zsh, bash)
+   - Docker Desktop 실행 상태 확인
+
+### Windows
+
+1. **필수 도구 설치**
+   - [Python 3.10+](https://www.python.org/downloads/windows/) 설치 (Add to PATH 체크)
+   - [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
+2. **오프라인 패키지/모델 복사**
+   - `offline_packages\`, `data\models\` 폴더 복사
+3. **설치 및 실행**
+   - PowerShell에서:
+     ```powershell
+     .\install.bat
+     .\start.bat
+     .\index.bat C:\Users\yourname\Workspace\yourproject
+     ```
+   - 또는 WSL(권장): Ubuntu 환경에서 Linux 설치법과 동일하게 실행
+4. **경로/권한/한글 경로 주의**
+   - 경로에 한글/공백이 없도록
+   - 관리자 권한으로 실행 필요 시 PowerShell "Run as Administrator"
+   - Docker Desktop 실행 상태 확인
+
+### Linux (Ubuntu 등)
+
+1. **필수 도구 설치**
+   - Python 3.10+ 설치: `sudo apt install python3 python3-venv python3-pip`
+   - Docker 설치: `curl -fsSL https://get.docker.com | sh`
+2. **오프라인 패키지/모델 복사**
+   - `offline_packages/`, `data/models/` 폴더 복사
+3. **설치 및 실행**
+   ```bash
+   chmod +x install.sh
+   ./install.sh --offline
+   ./start.sh
+   ./index.sh /home/yourname/yourproject
+   ```
+4. **권한/보안 이슈**
+   - 실행 권한 부여: `chmod +x *.sh`
+   - Docker 그룹 추가: `sudo usermod -aG docker $USER`
+   - Docker Desktop/엔진 실행 상태 확인
+
+### 공통 주의사항
+
+- 오프라인 설치 시, 모든 패키지/모델/도커 이미지를 미리 복사해야 함
+- Docker Desktop/엔진이 반드시 실행 중이어야 함
+- 환경변수/경로 문제 발생 시, OS별 안내 메시지 참고
+- 경로에 한글/공백/특수문자 사용 금지 권장
+
+---
+
 ## ✨ 주요 특징
 - **완전 오프라인/에어갭 설치**: 인터넷 없이도 모든 기능 사용 가능
 - **Qwen2.5-Coder 기반 LLM**: Cursor AI 수준의 코드 생성/보완 능력
