@@ -1,8 +1,16 @@
-# Open CodeAI 🚀
+한국어 | [English](README_en.md)
 
-**대형 프로젝트/폐쇄망 환경을 위한 오픈소스 AI 코드 어시스턴트**
+# Open CodeAI
+
+![License](https://img.shields.io/github/license/ChangooLee/open-codeai)
+
+Open CodeAI는 대형 프로젝트/폐쇄망 환경을 위한 오픈소스 AI 코드 어시스턴트입니다. 데이터 프라이버시와 보안을 유지하면서 안전하고 맥락적인 AI 코드 지원을 제공합니다.
+
+이 프로젝트는 [MIT 라이선스](LICENSE)를 따릅니다.
 
 ---
+
+[목차](#목차)
 
 ## 🖥️ OS별 설치/실행 가이드
 
