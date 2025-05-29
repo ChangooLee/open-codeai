@@ -115,7 +115,7 @@ def log_performance(func_name: str = None):
 
 # 기본 로거 설정 (모듈 로드 시 자동 실행)
 try:
-    from ..config import settings
+    from src.config import settings
     setup_logger(
         log_level=getattr(settings, 'LOG_LEVEL', 'INFO'),
         enable_file_logging=True

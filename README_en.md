@@ -84,11 +84,12 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## ✨ Key Features
 - **Fully Offline/Air-gapped Installation**: All features available without internet
-- **Qwen2.5-Coder-based LLM**: Code generation/completion on par with Cursor AI
+- **Qwen2.5-Coder based LLM**: Code generation/completion at Cursor AI level (vLLM endpoint auto-integrated)
 - **FAISS + Graph DB (Neo4j/NetworkX)**: Semantic/relationship search for large codebases
 - **Continue.dev Integration**: Use directly from VSCode/JetBrains
 - **Automated Setup/Configuration**: config.yaml → .env, auto-detects offline packages/models
 - **Supports Containerless/Sharding/Quantization Modes**
+- **vLLM engine**: Assumes endpoint is available, no separate installation required.
 
 ---
 
@@ -187,6 +188,10 @@ performance:
   - Check config.yaml, requirements.txt, offline_packages/ versions
 - **Q. Indexing is slow/out of memory**
   - Adjust parallel_workers, memory_limit_gb, chunk_size in config.yaml
+- **Q. Getting authentication errors with vLLM?**
+  - Make sure the `.env` file is in the project root and the API Key is correct
+  - You must use the Authorization header (`Bearer ...`) for authentication; do NOT put api_key in the body
+  - Ensure there are no leftover config/env files in configs/ or subfolders
 
 ---
 
@@ -226,4 +231,48 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE. 
+SOFTWARE.
+
+---
+
+## ⚙️ Environment Setup (.env) & DB Info
+
+- Use a `.env` or `.env.example` file in the project root.
+- **Vector DB/Graph DB** require no separate installation or configuration—they are managed internally. Users only need to set the port (VECTOR_DB_PORT, GRAPH_DB_PORT) if needed.
+- All data/model paths are managed automatically; you do not need to set them.
+
+### .env.example
+```env
+# Open CodeAI .env example file
+# Copy this file to .env for your setup (cp .env.example .env)
+
+# === LLM/vLLM Engine ===
+VLLM_ENDPOINT=http://localhost:8000/v1
+VLLM_API_KEY=your-vllm-api-key
+VLLM_MODEL_ID=Qwen2.5-Coder-32B-Instruct
+
+# === Server ===
+HOST=0.0.0.0
+PORT=8000
+LOG_LEVEL=INFO
+
+# === Project Info ===
+PROJECT_NAME=open-codeai
+VERSION=1.0.0
+ENVIRONMENT=development
+DEBUG=True
+
+# === Vector DB (FAISS, etc.) ===
+# No installation/config needed, managed internally
+VECTOR_DB_PORT=9000  # (set port if needed, default 9000)
+
+# === Graph DB (NetworkX/Neo4j) ===
+# No installation/config needed, managed internally
+GRAPH_DB_PORT=7687  # (set port if needed, default 7687)
+
+# === Other ===
+CORS_ORIGINS=http://localhost:3000,http://localhost:8080
+GPU_MEMORY_FRACTION=0.7
+USE_MIXED_PRECISION=True
+API_KEY=open-codeai-local-key
+``` 

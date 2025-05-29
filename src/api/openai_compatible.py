@@ -12,10 +12,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import json
 
-from ..config import settings
-from ..core.llm_manager import get_llm_manager
-from ..core.function_calling import get_function_registry, EnhancedLLMManager
-from ..core.rag_system import get_rag_system
+from src.config import settings
+from src.core.llm_manager import get_llm_manager
+from src.core.function_calling import get_function_registry, EnhancedLLMManager
+from src.core.rag_system import get_rag_system
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -529,7 +529,7 @@ async def analyze_file(
     """파일 분석 API"""
     
     try:
-        from ..core.code_analyzer import get_code_analyzer
+        from src.core.code_analyzer import get_code_analyzer
         analyzer = get_code_analyzer()
         
         logger.info(f"파일 분석 요청: {file_path}")

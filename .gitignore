@@ -83,4 +83,7 @@ htmlcov/
 # Secrets
 secrets/
 .env.local
-.env.production 
+.env.production
+
+# Ignore configs/vllm_test.env
+configs/vllm_test.env 

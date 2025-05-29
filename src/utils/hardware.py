@@ -171,7 +171,6 @@ def recommend_settings(hardware_info: Optional[Dict[str, Any]] = None) -> Dict[s
         "cache_size_gb": cache_size,
         "memory_limit_gb": memory_limit,
         "gpu": gpu_settings,
-        "use_vllm": gpu_available and gpu_memory >= 12,
         "batch_size": 64 if memory_gb >= 32 else 32
     }
 

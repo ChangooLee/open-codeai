@@ -12,6 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import json
 from abc import ABC, abstractmethod
+from transformers import GenerationConfig
 
 # 더미 모드 가져오기
 try:
@@ -25,7 +26,7 @@ try:
     import torch.nn.functional as F
     from transformers import (
         AutoTokenizer, AutoModelForCausalLM, AutoModel,
-        GenerationConfig, BitsAndBytesConfig
+        BitsAndBytesConfig
     )
     HAS_TORCH = True
 except ImportError:
@@ -119,22 +120,6 @@ class HFProvider(BaseLLMProvider):
         return generated_text.strip()
     def device(self) -> str:
         return self.device
-
-# vLLM Provider (더미, 실제 vllm 연동 필요시 확장)
-class VLLMProvider(BaseLLMProvider):
-    def __init__(self, model_path, max_tokens, temperature):
-        self.model_path = model_path
-        self.max_tokens = max_tokens
-        self.temperature = temperature
-        self.model = None
-    def load(self):
-        # 실제 vllm 연동 필요 (여기서는 더미)
-        pass
-    def generate(self, prompt: str, max_tokens: int, temperature: float, stop_sequences: Optional[List[str]]) -> str:
-        # 실제 vllm 연동 필요 (여기서는 NotImplementedError)
-        raise NotImplementedError("vLLMProvider는 실제 vLLM 엔진 연동 필요")
-    def device(self) -> str:
-        return "cuda"
 
 class ModelNotLoadedException(Exception):
     """모델이 로드되지 않았을 때 발생하는 예외"""
@@ -265,16 +250,12 @@ class EnhancedLLMManager:
     async def _load_main_model(self) -> bool:
         model_path = settings.llm.main_model.path
         model_type = getattr(settings.llm.main_model, 'type', 'qwen2.5-coder')
-        use_vllm = getattr(settings.llm.main_model, 'use_vllm', False)
         quantize = getattr(settings.llm.main_model, 'quantize', 'none')
         device = getattr(settings.llm.main_model, 'device', 'auto')
         max_tokens = getattr(settings.llm.main_model, 'max_tokens', 4096)
         temperature = getattr(settings.llm.main_model, 'temperature', 0.1)
-        # provider 선택
-        if use_vllm:
-            self.llm_provider = VLLMProvider(model_path, max_tokens, temperature)
-        else:
-            self.llm_provider = HFProvider(model_path, model_type, quantize, device, max_tokens, temperature)
+        # provider는 항상 HFProvider만 사용
+        self.llm_provider = HFProvider(model_path, model_type, quantize, device, max_tokens, temperature)
         try:
             self.llm_provider.load()
             self.main_model = self.llm_provider.model

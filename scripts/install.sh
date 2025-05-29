@@ -1,24 +1,21 @@
-# GPU 버전 패키지 설치
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-        pip install faiss-gpu>=1.7.4
-        pip install vllm>=0.2.7
+install_python_packages() {
+    log_header "=== Python 패키지 설치 ==="
+    if [[ "$GPU_AVAILABLE" == "true" ]]; then
+        log_info "GPU 환경 감지: torch, torchvision만 설치 (vllm, faiss-gpu, torchaudio 제외)"
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
     else
         log_warning "GPU를 감지할 수 없습니다. CPU 버전으로 설치합니다"
         GPU_AVAILABLE=false
-        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-        pip install faiss-cpu>=1.7.4
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
     fi
-    
     # 메인 패키지들 설치
     log_info "메인 패키지 설치 중..."
     pip install -r requirements.txt
-    
     # 개발 모드인 경우 개발 패키지도 설치
     if [[ "$INSTALL_MODE" == "dev" ]]; then
         pip install -r requirements-dev.txt
         log_info "개발 패키지 설치 완료"
     fi
-    
     log_success "Python 패키지 설치 완료"
 }
 
@@ -875,11 +872,79 @@ show_completion_message() {
     log_header "======================================"
 }
 
+# 플래그 파싱 함수 추가
+parse_arguments() {
+    # 기본값
+    OFFLINE_INSTALL=false
+    INSTALL_MODE="full"
+    DOWNLOAD_MODELS=true
+    ENABLE_MONITORING=false
+    PROJECT_PATH=""
+    USE_NEO4J=true
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --offline)
+                OFFLINE_INSTALL=true
+                ;;
+            --no-neo4j)
+                USE_NEO4J=false
+                ;;
+            --minimal)
+                INSTALL_MODE="minimal"
+                ;;
+            --no-model-download)
+                DOWNLOAD_MODELS=false
+                ;;
+            --enable-monitoring)
+                ENABLE_MONITORING=true
+                ;;
+            --project-path)
+                PROJECT_PATH="$2"
+                shift
+                ;;
+            *)
+                # 무시
+                ;;
+        esac
+        shift
+    done
+}
+
 # 메인 실행 함수
 main() {
     # 파라미터 파싱
     parse_arguments "$@"
-    
+
+    # 경로/권한/특수문자 안내
+    echo ""
+    log_header "======================================"
+    log_header "⚠️  경로에 한글/공백/특수문자 사용을 피하세요!"
+    log_header "======================================"
+    echo ""
+
+    # Docker 실행 상태 체크
+    if ! docker info &> /dev/null; then
+        log_error "Docker Desktop/엔진이 실행 중이 아닙니다. Docker를 실행한 후 다시 시도하세요."
+        exit 1
+    fi
+
+    # 오프라인 패키지/모델/도커 이미지 체크
+    if [[ "$OFFLINE_INSTALL" == "true" ]]; then
+        if [[ ! -d "offline_packages" || -z $(ls -A offline_packages 2>/dev/null) ]]; then
+            log_warning "offline_packages 폴더가 없거나 비어 있습니다. 오프라인 패키지 설치가 실패할 수 있습니다."
+        fi
+        if [[ ! -d "data/models" || -z $(ls -A data/models 2>/dev/null) ]]; then
+            log_error "data/models 폴더가 없거나 비어 있습니다. 모델 파일을 미리 복사해야 합니다."
+            exit 1
+        fi
+        if [[ -d "docker-images" ]]; then
+            if [[ -z $(ls -A docker-images/*.tar 2>/dev/null) ]]; then
+                log_warning "docker-images 폴더에 Docker 이미지 tar 파일이 없습니다."
+            fi
+        fi
+    fi
+
     echo ""
     log_header "======================================"
     log_header "🤖 Open CodeAI 설치 시작"
@@ -892,8 +957,21 @@ main() {
         log_info "프로젝트 경로: $PROJECT_PATH"
     fi
     echo ""
-    
-    # 설치 단계별 실행
+
+    if [[ "$OFFLINE_INSTALL" == "true" ]]; then
+        main_install
+        # 오프라인 설치 후 검증 및 안내
+        if verify_installation; then
+            show_completion_message
+        else
+            log_error "설치 중 일부 문제가 발생했습니다."
+            log_info "문제 해결 후 다음 명령으로 검증할 수 있습니다:"
+            log_info "python scripts/verify_installation.py"
+        fi
+        return
+    fi
+
+    # 온라인 설치 루트
     check_system_requirements
     install_system_dependencies
     setup_python_environment
@@ -904,7 +982,17 @@ main() {
     index_project
     setup_continue_integration
     create_startup_scripts
-    
+
+    # start.sh, index.sh 실행 권한 자동 부여
+    if [[ -f "start.sh" && ! -x "start.sh" ]]; then
+        chmod +x start.sh
+        log_info "start.sh에 실행 권한을 부여했습니다."
+    fi
+    if [[ -f "index.sh" && ! -x "index.sh" ]]; then
+        chmod +x index.sh
+        log_info "index.sh에 실행 권한을 부여했습니다."
+    fi
+
     # 설치 검증
     if verify_installation; then
         show_completion_message
@@ -960,30 +1048,20 @@ check_offline_models() {
     fi
 }
 
-# --no-neo4j 플래그 처리
-USE_NEO4J=true
-for arg in "$@"; do
-    if [[ "$arg" == "--no-neo4j" ]]; then
-        USE_NEO4J=false
-        log_info "--no-neo4j 플래그 감지: NetworkX(in-memory) 그래프 DB만 사용합니다."
-    fi
-    # ... 기존 플래그 처리 ...
-done
-
 # 메인 설치 함수에서 오프라인 설치 분기 추가
 main_install() {
     # 오프라인 패키지 설치 시도
     install_offline_packages || {
-        # 오프라인 패키지 없으면 기존 방식
         if [[ "$GPU_AVAILABLE" == "true" ]]; then
-            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-            pip install faiss-gpu>=1.7.4
-            pip install vllm>=0.2.7
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+            # pip install faiss-gpu>=1.7.4
+            # pip install vllm>=0.2.7
+            # pip install torchaudio
         else
             log_warning "GPU를 감지할 수 없습니다. CPU 버전으로 설치합니다"
             GPU_AVAILABLE=false
-            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-            pip install faiss-cpu>=1.7.4
+            pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+            # pip install faiss-cpu>=1.7.4
         fi
         pip install -r requirements.txt
         if [[ "$INSTALL_MODE" == "dev" ]]; then
@@ -1000,6 +1078,16 @@ main_install() {
         log_error "모델 파일이 없습니다. 설치를 중단합니다."
         exit 1
     }
+
+    # config.yaml → .env 자동 변환
+    if [[ -f "config.yaml" ]]; then
+        log_info "config.yaml을 감지했습니다. .env 파일을 자동 생성합니다."
+        if [[ -f "scripts/generate_env.py" ]]; then
+            python scripts/generate_env.py || log_warning ".env 자동 생성에 실패했습니다. 기본 .env 생성 로직을 사용합니다."
+        else
+            log_warning "scripts/generate_env.py가 없습니다. 기본 .env 생성 로직을 사용합니다."
+        fi
+    fi
 
     # 환경 변수 파일 생성 시 그래프 DB 타입 반영
     create_env_file

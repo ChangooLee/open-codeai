@@ -37,8 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = [
-    "faiss-gpu>=1.7.4",
-    "vllm>=0.2.7",
+    "faiss-gpu>=1.7.4"
+    # "vllm>=0.2.7",  # vllm 엔드포인트 서빙 제거, 필요시 주석 해제
 ]
 dev = [
     "pytest>=7.4.0",

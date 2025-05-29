@@ -19,13 +19,13 @@ import time
 # 프로젝트 루트를 Python 경로에 추가
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from config import settings
-from api.openai_compatible import router as openai_router
-from core.llm_manager import get_llm_manager
-from core.rag_system import get_rag_system
-from core.function_calling import get_function_registry
-from utils.logger import get_logger, setup_logging
-from utils.hardware import get_hardware_info
+from src.config import settings
+from src.api.openai_compatible import router as openai_router
+from src.core.llm_manager import get_llm_manager
+from src.core.rag_system import get_rag_system
+from src.core.function_calling import get_function_registry
+from src.utils.logger import get_logger, setup_logging
+from src.utils.hardware import get_hardware_info
 
 # 로거 설정
 setup_logging()

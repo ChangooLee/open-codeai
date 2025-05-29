@@ -12,7 +12,7 @@ torch>=2.1.0
 transformers>=4.36.0
 accelerate>=0.24.0
 sentence-transformers>=2.2.2
-vllm>=0.2.7
+# vllm>=0.2.7  # vLLM 엔드포인트가 있다고 가정 (로컬 설치 불필요)
 
 # Vector Database
 faiss-cpu>=1.7.4
