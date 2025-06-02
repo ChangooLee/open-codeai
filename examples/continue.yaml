@@ -1,0 +1,73 @@
+name: Local Assistant
+version: 1.0.0
+schema: v1
+
+models:
+  - name: Open CodeAI
+    provider: openai
+    model: open-codeai
+    apiKey: open-codeai-local-key
+    apiBase: http://localhost:8800/v1
+    roles:
+      - chat
+      - edit
+      - apply
+    contextLength: 4096
+    systemMessage: >
+      당신은 전문적인 소프트웨어 개발자입니다. 정확하고 효율적인 코드를 작성하며, 한국어로 명확하게 설명합니다.
+    requestOptions:
+      timeout: 30000
+      verifySsl: false
+
+  - name: Open CodeAI - Code Completion
+    provider: openai
+    model: qwen2.5-coder-32b
+    apiKey: open-codeai-local-key
+    apiBase: http://localhost:8800/v1
+    roles:
+      - autocomplete
+    contextLength: 2048
+    useLegacyCompletionsEndpoint: true
+
+  - name: Open CodeAI Autocomplete
+    provider: openai
+    model: qwen2.5-coder-32b
+    apiKey: open-codeai-local-key
+    apiBase: http://localhost:8800/v1
+    roles:
+      - autocomplete
+    contextLength: 1024
+    useLegacyCompletionsEndpoint: true
+    template: |
+      코드 자동완성을 위한 컨텍스트:
+
+      {{{prefix}}}
+
+      위 코드를 자연스럽게 완성해주세요:
+    completionOptions:
+      temperature: 0.1
+      maxTokens: 256
+      stop:
+        - "\n\n"
+        - "```"
+        - "def "
+        - "class "
+        - "import "
+        - "from "
+
+  - name: Nomic Embed
+    provider: openai
+    model: text-embedding-ada-002
+    apiKey: open-codeai-local-key
+    apiBase: http://localhost:8800/v1
+    roles:
+      - embed
+
+context:
+  - provider: code
+  - provider: docs
+  - provider: diff
+  - provider: terminal
+  - provider: problems
+  - provider: folder
+  - provider: codebase
