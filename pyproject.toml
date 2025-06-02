@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "open-codeai"
+version = "1.0.0"
+description = "Enterprise-grade AI code assistant for closed networks"
+authors = [{name = "Open CodeAI Team", email = "team@opencodeai.org"}]
+license = {text = "Apache-2.0"}
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = ["ai", "code-assistant", "llm", "cursor", "continue"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+    "torch>=2.1.0",
+    "transformers>=4.36.0",
+    "faiss-cpu>=1.7.4",
+    "neo4j>=5.15.0",
+    "tree-sitter>=0.20.0",
+    "llama-index>=0.9.0",
+    "pydantic>=2.5.0",
+    "loguru>=0.7.2",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "faiss-gpu>=1.7.4"
+    # "vllm>=0.2.7",  # vllm 엔드포인트 서빙 제거, 필요시 주석 해제
+]
+dev = [
+    "pytest>=7.4.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.7.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChangooLee/open-codeai"
+Documentation = "https://github.com/ChangooLee/open-codeai/wiki"
+Repository = "https://github.com/ChangooLee/open-codeai.git"
+Issues = "https://github.com/ChangooLee/open-codeai/issues"
+
+[project.scripts]
+opencodeai = "src.main:main"
+opencodeai-index = "scripts.index_project:main"
+opencodeai-setup = "scripts.setup:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py312']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.pytest_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+  | data
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+exclude = ["data/", "tests/fixtures/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "gpu: marks tests that require GPU",
+] 

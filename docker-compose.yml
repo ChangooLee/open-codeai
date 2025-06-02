@@ -1,0 +1,110 @@
+services:
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: open-codeai-api
+    ports:
+      - "8800:8800"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs
+      # 프로젝트 코드 마운트 (인덱싱용)
+      - ${PROJECT_PATH:-./}:/workspace:ro
+    depends_on:
+      - neo4j
+      - redis
+    environment:
+      - NEO4J_URI=bolt://neo4j:8768
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=opencodeai
+      - REDIS_URL=redis://redis:8637
+      - EMBEDDING_MODEL_ENDPOINT=http://embedding:9000/embedding
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8800/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: open-codeai-neo4j
+    ports:
+      - "8747:7474"  # Web UI
+      - "8768:7687"  # Bolt protocol
+    environment:
+      - NEO4J_AUTH=neo4j/opencodeai
+      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_server_memory_heap_initial__size=512M
+      - NEO4J_server_memory_heap_max__size=1G
+      - NEO4J_server_memory_pagecache_size=512M
+      # (Optional, for temporary workaround) Strict validation off:
+      # - NEO4J_server_config_strict__validation_enabled=false
+    volumes:
+      - ./data/neo4j/data:/data
+      - ./data/neo4j/logs:/logs
+      - ./data/neo4j/import:/var/lib/neo4j/import
+      - ./data/neo4j/plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "opencodeai", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    container_name: open-codeai-redis
+    ports:
+      - "8637:6379"
+    volumes:
+      - ./data/redis:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  embedding:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: open-codeai-embedding
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./offline_packages/codebert-base:/app/model
+    environment:
+      - MODEL_NAME=microsoft/codebert-base
+      - MODEL_PATH=/app/model
+      - DEVICE=auto
+    command: ["uvicorn", "src.utils.embedding_server:app", "--host", "0.0.0.0", "--port", "9000"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/embedding"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  neo4j-data:
+    driver: local
+  redis-data:
+    driver: local
+  codebert-base-model:
+    driver: local
+
+networks:
+  default:
+    name: open-codeai-network
+    driver: bridge

@@ -1,0 +1,88 @@
+# Python bytecode & build
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv/
+venv/
+env/
+ENV/
+venv.bak/
+env.bak/
+
+# IDEs & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS & Windows
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Data & logs (중요!)
+data/
+logs/
+
+# Temporary & cache
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Model files
+*.bin
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+
+# Large files
+*.zip
+*.tar.gz
+*.7z
+
+# Secrets
+secrets/
+.env.local
+.env.production
+
+# 기타 미사용/삭제된 폴더
+static/
+
+data/
+offline_packages/

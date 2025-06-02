@@ -1,0 +1,159 @@
+{
+    "models": [
+      {
+        "title": "Open CodeAI",
+        "provider": "openai",
+        "model": "open-codeai",
+        "apiKey": "open-codeai-local-key",
+        "apiBase": "http://localhost:8800/v1",
+        "systemMessage": "당신은 전문적인 소프트웨어 개발자입니다. 정확하고 효율적인 코드를 작성하며, 한국어로 명확하게 설명합니다.",
+        "contextLength": 4096,
+        "requestOptions": {
+          "timeout": 30000,
+          "verifySsl": false
+        }
+      },
+      {
+        "title": "Open CodeAI - Code Completion",
+        "provider": "openai", 
+        "model": "qwen2.5-coder-32b",
+        "apiKey": "open-codeai-local-key",
+        "apiBase": "http://localhost:8800/v1",
+        "useLegacyCompletionsEndpoint": true,
+        "contextLength": 2048
+      }
+    ],
+    "tabAutocompleteModel": {
+      "title": "Open CodeAI Autocomplete",
+      "provider": "openai",
+      "model": "qwen2.5-coder-32b", 
+      "apiKey": "open-codeai-local-key",
+      "apiBase": "http://localhost:8800/v1",
+      "useLegacyCompletionsEndpoint": true,
+      "contextLength": 1024,
+      "template": "코드 자동완성을 위한 컨텍스트:\n\n{{{prefix}}}\n\n위 코드를 자연스럽게 완성해주세요:",
+      "completionOptions": {
+        "temperature": 0.1,
+        "maxTokens": 256,
+        "stop": ["\n\n", "```", "def ", "class ", "import ", "from "]
+      }
+    },
+    "embeddingsProvider": {
+      "provider": "openai",
+      "model": "text-embedding-ada-002",
+      "apiKey": "open-codeai-local-key", 
+      "apiBase": "http://localhost:8800/v1"
+    },
+    "contextProviders": [
+      {
+        "name": "codebase",
+        "params": {
+          "nRetrieve": 25,
+          "nFinal": 5,
+          "useReranking": true
+        }
+      },
+      {
+        "name": "diff",
+        "params": {}
+      },
+      {
+        "name": "folder",
+        "params": {
+          "folders": ["src", "lib", "components"]
+        }
+      },
+      {
+        "name": "open",
+        "params": {}
+      },
+      {
+        "name": "terminal",
+        "params": {}
+      },
+      {
+        "name": "problems", 
+        "params": {}
+      },
+      {
+        "name": "gitlab-mr",
+        "params": {
+          "token": "${GITLAB_TOKEN}",
+          "domain": "gitlab.com"
+        }
+      }
+    ],
+    "slashCommands": [
+      {
+        "name": "edit",
+        "description": "코드 편집 제안"
+      },
+      {
+        "name": "comment", 
+        "description": "코드에 주석 추가"
+      },
+      {
+        "name": "share",
+        "description": "코드 공유"
+      },
+      {
+        "name": "cmd",
+        "description": "터미널 명령어 실행"
+      },
+      {
+        "name": "commit",
+        "description": "Git 커밋 메시지 생성"
+      }
+    ],
+    "customCommands": [
+      {
+        "name": "review",
+        "prompt": "다음 코드를 리뷰하고 개선점을 제안해주세요:\n\n{{{ input }}}\n\n리뷰 포인트:\n1. 코드 품질\n2. 성능 최적화\n3. 보안 이슈\n4. 가독성\n5. 유지보수성",
+        "description": "코드 리뷰 및 개선점 제안"
+      },
+      {
+        "name": "explain",
+        "prompt": "다음 코드의 동작을 단계별로 자세히 설명해주세요:\n\n{{{ input }}}\n\n설명에 포함할 내용:\n1. 전체적인 목적\n2. 각 부분의 역할\n3. 사용된 알고리즘이나 패턴\n4. 주의사항이나 특이점",
+        "description": "코드 동작 원리 상세 설명"
+      },
+      {
+        "name": "test",
+        "prompt": "다음 코드에 대한 포괄적인 단위 테스트를 작성해주세요:\n\n{{{ input }}}\n\n테스트 케이스에 포함할 내용:\n1. 정상 케이스\n2. 경계값 테스트\n3. 예외 상황\n4. 모킹이 필요한 외부 의존성",
+        "description": "단위 테스트 코드 생성"
+      },
+      {
+        "name": "optimize",
+        "prompt": "다음 코드의 성능을 최적화해주세요:\n\n{{{ input }}}\n\n최적화 고려사항:\n1. 시간 복잡도 개선\n2. 메모리 사용량 최적화\n3. 불필요한 연산 제거\n4. 효율적인 자료구조 사용\n\n최적화 전후 성능 차이도 설명해주세요.",
+        "description": "코드 성능 최적화"
+      },
+      {
+        "name": "document",
+        "prompt": "다음 코드에 대한 상세한 문서를 작성해주세요:\n\n{{{ input }}}\n\n문서에 포함할 내용:\n1. 함수/클래스 설명\n2. 매개변수 및 반환값\n3. 사용 예시\n4. 주의사항\n5. 관련 함수들과의 관계",
+        "description": "코드 문서화"
+      }
+    ],
+    "rules": [
+      "한국어로 명확하고 정확하게 답변합니다.",
+      "코드 작성 시 최신 모범 사례를 따릅니다.", 
+      "보안과 성능을 항상 고려합니다.",
+      "가독성과 유지보수성을 중시합니다.",
+      "적절한 주석과 문서화를 포함합니다.",
+      "테스트 가능한 코드를 작성합니다.",
+      "코드 리뷰 시 건설적인 피드백을 제공합니다."
+    ],
+    "allowAnonymousTelemetry": false,
+    "ui": {
+      "codeBlockToolbar": true,
+      "fontSize": 14,
+      "displayRawMarkdown": false
+    },
+    "experimental": {
+      "useChromiumForDocsCrawling": true,
+      "useInputBoxWhenCursorNotAtEndOfLine": true,
+      "modelRoles": {
+        "inlineEdit": "Open CodeAI",
+        "applyCodeBlock": "Open CodeAI", 
+        "summarize": "Open CodeAI"
+      }
+    }
+  }
