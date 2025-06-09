@@ -600,6 +600,17 @@ class GraphDatabase:
             return [n for n in self.graph.nodes if os.path.basename(n) == filename or filename in os.path.basename(n)]
         return []
 
+    def get_key_nodes(self, top_n: int = 10) -> list:
+        """
+        프로젝트 전체 분석용 주요 노드(진입점, 허브, 연결 많은 함수/파일 등) 추출
+        """
+        if not hasattr(self, 'graph') or self.graph is None:
+            return []
+        # 파일/함수 노드 중 degree(연결 수) 기준 상위 top_n 추출
+        nodes = [(n, self.graph.degree(n)) for n in self.graph.nodes if self.graph.nodes[n].get('type') in {'file', 'function'}]
+        nodes_sorted = sorted(nodes, key=lambda x: x[1], reverse=True)
+        return [n for n, _ in nodes_sorted[:top_n]]
+
 class CodeIndexer:
     """코드 인덱싱 시스템"""
     
@@ -1151,6 +1162,29 @@ class CodeIndexer:
             logger.error(f"통계 조회 실패: {e}")
             return {}
 
+def extract_user_query(query):
+    """
+    query가 dict(messages=...) 또는 str(prompt)일 때, 가장 마지막 user 메시지 content만 추출
+    """
+    if isinstance(query, dict) and 'messages' in query:
+        user_messages = [m['content'] for m in query['messages'] if m.get('role') == 'user']
+        return user_messages[-1] if user_messages else ''
+    elif isinstance(query, list):
+        user_messages = [m['content'] for m in query if m.get('role') == 'user']
+        return user_messages[-1] if user_messages else ''
+    elif isinstance(query, str):
+        # 프롬프트에서 마지막 User: ... 를 추출
+        import re
+        matches = re.findall(r'User: (.*?)(?:\n|$)', query, re.DOTALL)
+        return matches[-1].strip() if matches else query.strip()
+    return str(query)
+
+def is_full_project_query(user_query: str) -> bool:
+    keywords = [
+        '전체 코드', '전체 구조', '전체 파일', '프로젝트 전체', 'all files', 'project overview', '전체 분석', '전체 함수', '전체 클래스', '전체 모듈', '전체 연관관계', '전체 dependency', '전체 의존성'
+    ]
+    return any(k in user_query.lower() for k in keywords)
+
 class RAGSystem:
     """RAG (Retrieval-Augmented Generation) 시스템"""
     
@@ -1164,24 +1198,21 @@ class RAGSystem:
         self,
         query: str,
         project_path: Optional[str] = None,
-        k: int = 10,
+        k: int = 50,
         include_graph: bool = True
     ) -> list:
-        logger.info(f"[RAGSystem] search_codebase 진입: query='{query[:50]}...', k={k}, include_graph={include_graph}")
+        logger.info(f"[RAGSystem] search_codebase 진입: query='{str(query)[:50]}...', k={k}, include_graph={include_graph}")
         try:
-            logger.info(f"코드베이스 검색: {query[:50]}...")
-            # 벡터 DB가 비어 있으면 자동 재인덱싱 시도
+            user_query = extract_user_query(query)
+            logger.info(f"코드베이스 검색: {user_query[:50]}...")
             if not self.vector_db.chunk_map or len(self.vector_db.chunk_map) == 0:
                 logger.warning("[RAGSystem] 벡터 DB가 비어 있음. 자동 재인덱싱 시도...")
                 await self.indexer.index_directory("/workspace")
-            # 파일명 쿼리일 경우 우선적으로 파일명 기반 검색
-            if query.strip().endswith('.js') or query.strip().endswith('.py') or query.strip().endswith('.ts'):
-                matches = self.vector_db.search_file_by_name(query.strip())
+            if user_query.strip().endswith('.js') or user_query.strip().endswith('.py') or user_query.strip().endswith('.ts'):
+                matches = self.vector_db.search_file_by_name(user_query.strip())
                 if matches:
-                    # SearchResult 객체로 변환
                     results = []
                     for path in matches:
-                        # file_index에서 첫 번째 청크를 가져옴
                         chunk_ids = self.vector_db.file_index.get(path, [])
                         if chunk_ids:
                             chunk = self.vector_db.chunk_map[chunk_ids[0]]
@@ -1189,18 +1220,14 @@ class RAGSystem:
                             results.append(sr)
                     logger.info(f"[RAGSystem] 파일명 기반 검색 결과: {len(results)}개")
                     return results[:k]
-            # 벡터 검색
-            vector_results = await self.vector_db.search(query, k)
-            # 그래프 정보 추가
+            vector_results = await self.vector_db.search(user_query, k)
             if include_graph:
                 for result in vector_results:
                     file_path = result.chunk.file_path
                     related_files = self.graph_db.find_related_files(file_path)
                     result.graph_connections = related_files
-                    # 관련성 점수 조정
                     graph_boost = len(related_files) * 0.1
                     result.relevance_score = result.similarity_score + graph_boost
-            # 결과 정렬
             vector_results.sort(key=lambda x: x.relevance_score or x.similarity_score, reverse=True)
             logger.info(f"[RAGSystem] search_codebase 결과: {len(vector_results)}개")
             return vector_results
@@ -1213,21 +1240,49 @@ class RAGSystem:
         query: str, 
         max_context_length: int = 4000
     ) -> str:
-        logger.debug(f"[RAGSystem] get_context_for_query 진입: query='{query[:50]}...'")
+        logger.debug(f"[RAGSystem] get_context_for_query 진입: query='{str(query)[:50]}...'")
         try:
-            # 관련 코드 검색
-            search_results = await self.search_codebase(query, k=5)
-            
-            if not search_results:
-                return ""
-            
+            user_query = extract_user_query(query)
+            # 전체 프로젝트/구조/연관관계 요청이면 분할 분석
+            if is_full_project_query(user_query):
+                # 1. graph DB에서 주요 노드 추출
+                key_nodes = self.graph_db.get_key_nodes(top_n=10)
+                logger.info(f"[RAGSystem] 전체 분석용 주요 노드: {key_nodes}")
+                # 2. 각 노드별로 vector DB에서 chunk 추출
+                partial_contexts = []
+                for node in key_nodes:
+                    # 파일 노드면 해당 파일의 첫 chunk, 함수 노드면 id 매칭 chunk
+                    chunk = None
+                    if node in self.vector_db.file_index:
+                        chunk_ids = self.vector_db.file_index[node]
+                        if chunk_ids:
+                            chunk = self.vector_db.chunk_map[chunk_ids[0]]
+                    elif node in self.vector_db.chunk_map:
+                        chunk = self.vector_db.chunk_map[node]
+                    if chunk:
+                        partial_contexts.append(chunk)
+                # 3. 각 chunk별로 LLM에 부분 분석 요청 (비동기)
+                async def analyze_chunk(chunk):
+                    prompt = f"""아래 코드의 역할과 다른 파일/함수와의 연관관계를 요약해줘.\n\n# 파일: {chunk.file_path}\n# 라인: {chunk.start_line}-{chunk.end_line}\n# 타입: {chunk.chunk_type}\n\n```{chunk.language}\n{chunk.content}\n```"""
+                    return await self.llm_manager.generate_response(prompt, max_tokens=512, temperature=0.1)
+                import asyncio
+                analyses = await asyncio.gather(*[analyze_chunk(chunk) for chunk in partial_contexts])
+                # 4. 부분 분석 결과를 LLM에 통합 요약 요청
+                summary_prompt = f"""아래는 프로젝트 주요 파일/함수별 분석 결과입니다.\n각 부분을 종합해 전체 코드 구조, 주요 기능, 연관관계를 한눈에 볼 수 있게 요약해줘.\n\n"""
+                for i, (chunk, analysis) in enumerate(zip(partial_contexts, analyses)):
+                    summary_prompt += f"## [{i+1}] 파일/함수: {chunk.file_path} ({chunk.chunk_type})\n분석: {analysis}\n\n"
+                summary_prompt += "\n최종 요약:"
+                final_summary = await self.llm_manager.generate_response(summary_prompt, max_tokens=1024, temperature=0.1)
+                return final_summary
+            # 기존 방식 (부분 검색)
             context_parts = []
             current_length = 0
-            
+            k = 5
+            search_results = await self.search_codebase(user_query, k=k)
+            if not search_results:
+                return ""
             for result in search_results:
                 chunk = result.chunk
-                
-                # 컨텍스트 형식화
                 context_part = f"""
 # File: {chunk.file_path} (Lines {chunk.start_line}-{chunk.end_line})
 # Type: {chunk.chunk_type}
@@ -1237,16 +1292,12 @@ class RAGSystem:
 {chunk.content}
 ```
 """
-                
                 if current_length + len(context_part) > max_context_length:
                     break
-                
                 context_parts.append(context_part)
                 current_length += len(context_part)
-            
             logger.info(f"[RAGSystem] 컨텍스트 생성 완료: {len(context_parts)}개 파트, 총 길이 {current_length}")
             return "\n".join(context_parts)
-            
         except Exception as e:
             logger.error(f"컨텍스트 생성 실패: {e}")
             return ""

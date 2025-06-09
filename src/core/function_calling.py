@@ -250,11 +250,10 @@ class FunctionCallRegistry:
     async def _search_codebase(self, query: str, max_results: int = 5, file_type: Optional[str] = None) -> Dict[str, Any]:
         """코드베이스 검색"""
         try:
-            # 파일 타입 필터링을 위한 쿼리 조정
             if file_type:
                 query = f"{query} filetype:{file_type}"
-            
-            results = await self.rag_system.search_codebase(query, k=max_results)
+            user_query = extract_user_query(query)
+            results = await self.rag_system.search_codebase(user_query, k=max_results)
             
             formatted_results = []
             for result in results:
@@ -337,9 +336,9 @@ class FunctionCallRegistry:
     async def _find_function_definition(self, function_name: str, include_usage: bool = True) -> Dict[str, Any]:
         """함수 정의 찾기"""
         try:
-            # 함수명으로 검색
             query = f"def {function_name}" if not function_name.startswith("def ") else function_name
-            results = await self.rag_system.search_codebase(query, k=10)
+            user_query = extract_user_query(query)
+            results = await self.rag_system.search_codebase(user_query, k=10)
             
             function_results = []
             usage_examples = []
@@ -391,9 +390,9 @@ class FunctionCallRegistry:
     async def _find_class_definition(self, class_name: str, include_methods: bool = True) -> Dict[str, Any]:
         """클래스 정의 찾기"""
         try:
-            # 클래스명으로 검색
             query = f"class {class_name}" if not class_name.startswith("class ") else class_name
-            results = await self.rag_system.search_codebase(query, k=10)
+            user_query = extract_user_query(query)
+            results = await self.rag_system.search_codebase(user_query, k=10)
             
             class_results = []
             
@@ -565,6 +564,22 @@ class FunctionCallParser:
         
         return results
 
+def extract_user_query(query):
+    """
+    query가 dict(messages=...) 또는 str(prompt)일 때, 가장 마지막 user 메시지 content만 추출
+    """
+    if isinstance(query, dict) and 'messages' in query:
+        user_messages = [m['content'] for m in query['messages'] if m.get('role') == 'user']
+        return user_messages[-1] if user_messages else ''
+    elif isinstance(query, list):
+        user_messages = [m['content'] for m in query if m.get('role') == 'user']
+        return user_messages[-1] if user_messages else ''
+    elif isinstance(query, str):
+        import re
+        matches = re.findall(r'User: (.*?)(?:\n|$)', query, re.DOTALL)
+        return matches[-1].strip() if matches else query.strip()
+    return str(query)
+
 class EnhancedLLMManager:
     """Function Calling이 통합된 LLM 관리자"""
     
@@ -583,63 +598,44 @@ class EnhancedLLMManager:
     ) -> str:
         """Function Calling을 포함한 응답 생성"""
         try:
-            # 1단계: 코드베이스 컨텍스트가 필요한지 판단
             if self._needs_codebase_context(prompt):
-                # 자동으로 코드베이스 검색 수행
-                context = await self.rag_system.get_context_for_query(prompt)
-                
+                user_query = extract_user_query(prompt)
+                context = await self.rag_system.get_context_for_query(user_query)
                 if context:
-                    # 컨텍스트를 포함한 프롬프트 생성
-                    enhanced_prompt = f"""사용자 질문에 답변하기 위해 관련 코드를 검색했습니다.
-
-## 관련 코드 컨텍스트:
-{context}
-
-## 사용자 질문:
-{prompt}
-
-## 답변 작성 지침 (매우 중요):
-- 반드시 먼저 간결한 자연어 설명을 한 문단 이내로 작성하세요.
-- 그 다음, 실제 코드 변경이 필요한 경우 아래 예시처럼 info string(언어 + 프로젝트 루트 기준 상대경로)을 포함한 코드블록을 반드시 제공하세요.
-- 설명과 코드블록은 반드시 분리하세요.
-- 여러 파일을 수정할 경우, 각 파일마다 설명+코드블록 쌍을 반복하세요.
-- diff, 삭제, 추가 등 모든 변경도 info string을 포함한 코드블록으로 작성하세요.
-- 코드블록 외에는 불필요한 요약, 적용 방법, 추가 설명을 넣지 마세요.
-
-예시:
-아래처럼 설명 후 코드블록을 제공합니다.
-
-서비스 배열에 autogen을 추가합니다.
-```javascript data/services.js
-// ... existing code ...
-{
-    name: "autogen",
-    url: "http://121.141.60.219:3004/",
-    icon: "/icons/autogen.png",
-    description: "자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다."
-},
-// ... rest of code ...
-```
-
-또는 diff 예시:
-새 서비스 추가 diff입니다.
-```diff data/services.js
-+    {
-+        name: "autogen",
-+        url: "http://121.141.60.219:3004/",
-+        icon: "/icons/autogen.png",
-+        description: "자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다."
-+    },
-```
-"""
+                    enhanced_prompt = (
+                        "사용자 질문에 답변하기 위해 관련 코드를 검색했습니다.\n\n"
+                        "## 관련 코드 컨텍스트:\n" + context + "\n\n"
+                        "## 사용자 질문:\n" + user_query + "\n\n"
+                        "## 답변 작성 지침 (매우 중요):\n"
+                        "- 반드시 먼저 간결한 자연어 설명을 한 문단 이내로 작성하세요.\n"
+                        "- 그 다음, 실제 코드 변경이 필요한 경우 아래 예시처럼 info string(언어 + 프로젝트 루트 기준 상대경로)을 포함한 코드블록을 반드시 제공하세요.\n"
+                        "- 설명과 코드블록은 반드시 분리하세요.\n"
+                        "- 여러 파일을 수정할 경우, 각 파일마다 설명+코드블록 쌍을 반복하세요.\n"
+                        "- diff, 삭제, 추가 등 모든 변경도 info string을 포함한 코드블록으로 작성하세요.\n"
+                        "- 코드블록 외에는 불필요한 요약, 적용 방법, 추가 설명을 넣지 마세요.\n\n"
+                        "예시:\n아래처럼 설명 후 코드블록을 제공합니다.\n\n"
+                        "서비스 배열에 autogen을 추가합니다.\n"
+                        "```javascript data/services.js\n"
+                        "// ... existing code ...\n"
+                        "{\n    name: \"autogen\",\n    url: \"http://121.141.60.219:3004/\",\n    icon: \"/icons/autogen.png\",\n    description: \"자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다.\"\n},\n"
+                        "// ... rest of code ...\n"
+                        "```\n\n"
+                        "또는 diff 예시:\n새 서비스 추가 diff입니다.\n"
+                        "```diff data/services.js\n"
+                        "+    {\n"
+                        "+        name: \"autogen\",\n"
+                        "+        url: \"http://121.141.60.219:3004/\",\n"
+                        "+        icon: \"/icons/autogen.png\",\n"
+                        "+        description: \"자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다.\"\n"
+                        "+    },\n"
+                        "```\n"
+                    )
                 else:
-                    enhanced_prompt = prompt
+                    enhanced_prompt = user_query
             else:
-                enhanced_prompt = prompt
+                enhanced_prompt = extract_user_query(prompt)
             
-            # 2단계: 함수 호출이 가능한 프롬프트인지 확인
             if enable_function_calling and self._should_use_functions(enhanced_prompt):
-                # 함수 목록을 포함한 프롬프트 생성
                 functions_info = self._get_functions_info()
                 enhanced_prompt = f"""{enhanced_prompt}
 
@@ -651,24 +647,20 @@ class EnhancedLLMManager:
 {{"function": "함수명", "arguments": {{"파라미터": "값"}}}}
 ```"""
             
-            # 3단계: LLM으로 응답 생성
             response = await self.base_llm.generate_response(
                 prompt=enhanced_prompt,
                 max_tokens=max_tokens,
                 temperature=temperature
             )
             
-            # 4단계: 응답에서 함수 호출 추출 및 실행
             if enable_function_calling:
                 function_calls = self.function_parser.extract_function_calls(response)
                 
                 if function_calls:
                     print(f"[EnhancedLLMManager] 함수 호출 감지: {len(function_calls)}개")
                     
-                    # 함수 실행
                     call_results = await self.function_parser.process_function_calls(function_calls)
                     
-                    # 함수 결과를 포함한 최종 응답 생성
                     final_prompt = f"""이전 응답: {response}
 
 함수 실행 결과:
@@ -689,7 +681,6 @@ class EnhancedLLMManager:
             
         except Exception as e:
             print(f"[EnhancedLLMManager] Function calling 응답 생성 실패: {e}")
-            # 폴백: 기본 LLM 응답
             return str(await self.base_llm.generate_response(prompt, max_tokens, temperature))
     
     def _needs_codebase_context(self, prompt: str) -> bool:
