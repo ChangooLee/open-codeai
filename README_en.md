@@ -18,6 +18,48 @@ This project is licensed under the [MIT License](LICENSE).
 
 Open CodeAI can be installed in both online and offline environments.
 
+### Virtual Environment Setup
+It is recommended to create and activate a Python virtual environment before installation:
+
+```bash
+# Create virtual environment
+python -m venv .venv
+
+# Activate virtual environment
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+# Windows (Command Prompt)
+.\.venv\Scripts\activate.bat
+# macOS/Linux
+source .venv/bin/activate
+```
+
+#### Additional Windows Setup Guide
+1. **PowerShell Execution Policy**
+   - If script execution is blocked in PowerShell, run as administrator:
+   ```powershell
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+2. **Visual Studio Build Tools**
+   - Required for some package installations
+   - Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   - Select "C++ build tools" workload during installation
+
+3. **Python Path Configuration**
+   - Verify Python and pip are in system PATH
+   - Check in Command Prompt:
+   ```cmd
+   python --version
+   pip --version
+   ```
+
+4. **Virtual Environment Troubleshooting**
+   - If activation fails:
+     - PowerShell: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`
+     - Command Prompt: Run as administrator
+   - If path contains non-ASCII characters, try moving to an ASCII-only path
+
 ### Online Installation (Default)
 For online environments, use the following command:
 ```bash

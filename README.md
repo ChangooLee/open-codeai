@@ -18,6 +18,48 @@ Open CodeAI는 대형 프로젝트/폐쇄망 환경을 위한 오픈소스 AI �
 
 Open CodeAI는 온라인과 오프라인 환경 모두에서 설치할 수 있습니다.
 
+#### 가상환경 설정
+설치 전에 Python 가상환경을 생성하고 활성화하는 것을 권장합니다:
+
+```bash
+# 가상환경 생성
+python -m venv .venv
+
+# 가상환경 활성화
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+# Windows (Command Prompt)
+.\.venv\Scripts\activate.bat
+# macOS/Linux
+source .venv/bin/activate
+```
+
+##### Windows 사용자를 위한 추가 안내
+1. **PowerShell 실행 정책 설정**
+   - PowerShell에서 스크립트 실행이 차단될 경우, 관리자 권한으로 다음 명령어 실행:
+   ```powershell
+   Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+   ```
+
+2. **Visual Studio Build Tools**
+   - 일부 패키지 설치 시 Visual Studio Build Tools가 필요할 수 있습니다
+   - [Visual Studio Build Tools](https://visualstudio.microsoft.com/ko/visual-cpp-build-tools/) 설치
+   - 설치 시 "C++ 빌드 도구" 워크로드 선택
+
+3. **Python 경로 설정**
+   - 시스템 환경 변수에 Python과 pip가 추가되어 있는지 확인
+   - 명령 프롬프트에서 다음 명령어로 확인:
+   ```cmd
+   python --version
+   pip --version
+   ```
+
+4. **가상환경 문제 해결**
+   - 가상환경 활성화가 안 되는 경우:
+     - PowerShell: `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser`
+     - Command Prompt: 관리자 권한으로 실행
+   - 경로에 한글이 포함된 경우 영문 경로로 이동 후 시도
+
 #### 온라인 설치 (기본)
 온라인 환경에서는 다음 명령어로 설치할 수 있습니다:
 ```bash
