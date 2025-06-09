@@ -360,8 +360,9 @@ class EnhancedLLMManager:
     async def generate_embedding(self, text: str) -> list:
         """embedding API(9000포트)로 텍스트 임베딩 요청"""
         import aiohttp
+        embedding_server_url = os.getenv("EMBEDDING_SERVER_URL", "http://localhost:9000")
         async with aiohttp.ClientSession() as session:
-            url = "http://localhost:9000/embedding"
+            url = f"{embedding_server_url}/embedding"
             payload = {"texts": [text]}
             async with session.post(url, json=payload) as resp:
                 resp.raise_for_status()

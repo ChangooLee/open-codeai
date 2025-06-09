@@ -600,6 +600,12 @@ async def admin_index_project(
     if not settings.DEBUG:
         raise HTTPException(status_code=403, detail="관리자 기능은 디버그 모드에서만 사용 가능합니다")
     try:
+        rag_system = get_rag_system()
+        if getattr(rag_system.indexer, 'indexing_in_progress', False):
+            return JSONResponse(status_code=429, content={
+                "status": "indexing_in_progress",
+                "message": "인덱싱 중입니다. 인덱싱이 끝난 후 다시 시도해 주세요."
+            })
         # Use workspace root as default project path
         project_root = getattr(settings, 'PROJECT_ROOT', os.getcwd())
         target_path = project_path or project_root
@@ -614,7 +620,6 @@ async def admin_index_project(
                         await rag_system.indexer.index_file(readme_path)
                 return result
             return wrapper
-        rag_system = get_rag_system()
         rag_system.indexer.index_directory = patch_index_directory(rag_system.indexer.index_directory)
         # 백그라운드에서 인덱싱 실행
         async def index_task() -> None:
@@ -803,7 +808,7 @@ def main():
             host=settings.HOST,
             port=settings.PORT,
             reload=settings.DEBUG and workers == 1,  # 리로드는 단일 워커에서만
-            log_level="info" if settings.DEBUG else "warning",
+            log_level="debug",
             access_log=settings.DEBUG,
             workers=workers,
             loop="asyncio",

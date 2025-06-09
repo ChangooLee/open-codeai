@@ -59,17 +59,18 @@ class SearchResult:
 class VectorDatabase:
     """FAISS 기반 벡터 데이터베이스"""
     
-    def __init__(self, dimension: int = 1024, index_path: str = None):
-        self.dimension = dimension
-        self.index_path = index_path or settings.VECTOR_INDEX_PATH
+    def __init__(self, dimension: int = None, index_path: str = ""):
+        # EMBEDDING_MODEL_DIM 환경변수에서 차원 읽기, 기본값 768
+        self.dimension = int(os.getenv("EMBEDDING_MODEL_DIM", 768)) if dimension is None else dimension
+        self.index_path: str = index_path or settings.VECTOR_INDEX_PATH
         self.index = None
-        self.chunk_map = {}  # chunk_id -> CodeChunk
-        self.file_index = {}  # file_path -> List[chunk_id]
+        self.chunk_map: dict[str, CodeChunk] = {}  # chunk_id -> CodeChunk
+        self.file_index: dict[str, list[str]] = {}  # file_path -> List[chunk_id]
         self._lock = threading.Lock()
         
         self._initialize_index()
     
-    def _initialize_index(self):
+    def _initialize_index(self) -> None:
         """인덱스 초기화"""
         try:
             if HAS_FAISS:
@@ -147,55 +148,55 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"인덱스 저장 실패: {e}")
     
-    async def add_chunks(self, chunks: List[CodeChunk]):
-        """청크들을 인덱스에 추가"""
+    async def add_chunks(self, chunks: List[CodeChunk]) -> None:
+        logger.warning(f"[DEBUG] add_chunks 진입: 입력 청크 개수={len(chunks) if chunks else 0}")
         if not chunks:
+            logger.warning("add_chunks: 입력 청크가 없습니다.")
             return
             
         try:
-            # 임베딩 생성
             llm_manager = get_llm_manager()
-            
             embeddings = []
             valid_chunks = []
             
-            for chunk in chunks:
+            for idx, chunk in enumerate(chunks):
+                logger.warning(f"[DEBUG] add_chunks: 처리중 chunk[{idx}] id={chunk.id} file={chunk.file_path}")
                 if chunk.embedding is None:
-                    # 청크 내용으로 임베딩 생성
                     embedding_text = f"{chunk.file_path}\n{chunk.content}"
+                    logger.warning(f"[DEBUG] 임베딩 생성 시작: {chunk.id}")
                     embedding = await llm_manager.generate_embedding(embedding_text)
+                    logger.warning(f"[DEBUG] 임베딩 생성 결과: {chunk.id} → {type(embedding)} 길이={len(embedding) if embedding else 'None'}")
                     chunk.embedding = embedding
                 
+                if chunk.embedding is None or not isinstance(chunk.embedding, list) or len(chunk.embedding) == 0:
+                    logger.warning(f"임베딩 생성 실패: {chunk.file_path} ({chunk.id}) - 결과: {chunk.embedding}")
+                    continue
+
                 if len(chunk.embedding) == self.dimension:
                     embeddings.append(chunk.embedding)
                     valid_chunks.append(chunk)
                 else:
-                    logger.warning(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension}")
+                    logger.warning(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension} - {chunk.file_path} ({chunk.id})")
             
             if not valid_chunks:
+                logger.error(f"add_chunks: 유효한 청크가 하나도 없습니다. (입력: {len(chunks)}개, 예시 id: {[chunk.id for chunk in chunks[:3]]})")
+                for idx, chunk in enumerate(chunks[:5]):
+                    logger.error(f"[DEBUG] 청크 요약[{idx}]: id={chunk.id} file={chunk.file_path} content_len={len(chunk.content)} embedding={chunk.embedding}")
                 return
             
             with self._lock:
                 if HAS_FAISS and self.index:
-                    # FAISS 인덱스에 추가
                     embeddings_array = np.array(embeddings, dtype=np.float32)
                     self.index.add(embeddings_array)
-                
-                # 청크 매핑 업데이트
                 for chunk in valid_chunks:
                     self.chunk_map[chunk.id] = chunk
-                    
                     if chunk.file_path not in self.file_index:
                         self.file_index[chunk.file_path] = []
                     if chunk.id not in self.file_index[chunk.file_path]:
                         self.file_index[chunk.file_path].append(chunk.id)
-                
-                # 주기적으로 저장
                 if len(self.chunk_map) % 100 == 0:
                     self._save_index()
-            
             logger.info(f"벡터 DB에 {len(valid_chunks)} 청크 추가됨")
-            
         except Exception as e:
             logger.error(f"청크 추가 실패: {e}")
     
@@ -262,7 +263,7 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"파일 제거 실패: {e}")
     
-    async def _rebuild_index(self):
+    async def _rebuild_index(self) -> None:
         """인덱스 재구축"""
         try:
             if not HAS_FAISS:
@@ -685,27 +686,27 @@ class CodeIndexer:
             await self._add_to_graph(file_path, analysis_result)
             
             # 메타데이터 업데이트
-            self._update_file_metadata(file_path, len(chunks), analysis_result.language)
+            self._update_file_metadata(file_path, len(chunks), analysis_result['language'])
             
             logger.success(f"파일 인덱싱 완료: {file_path} ({len(chunks)} 청크)")
             return True
             
         except Exception as e:
-            logger.error(f"파일 인덱싱 실패 {file_path}: {e}")
+            import traceback
+            logger.error(f"파일 인덱싱 실패 {file_path}: {e}\n{traceback.format_exc()}")
             return False
     
     async def _chunk_file(self, file_path: str, analysis: Dict[str, Any]) -> List[CodeChunk]:
         """파일을 청크로 분할"""
         chunks = []
-        
+        logger.debug(f"[CHUNK_FILE] 진입: file_path={file_path}, 분석 keys={list(analysis.keys())}")
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
-            
             lines = content.split('\n')
-            
             # 함수 기반 청크 생성
             if analysis.get('functions'):
+                logger.debug(f"[CHUNK_FILE] 함수 청크 {len(analysis['functions'])}개 생성 시도")
                 for func in analysis['functions']:
                     chunk_content = '\n'.join(lines[func['start_line']-1:func['end_line']])
                     chunk_id = f"{file_path}::func::{func['name']}"
@@ -726,9 +727,9 @@ class CodeIndexer:
                         }
                     )
                     chunks.append(chunk)
-            
             # 클래스 기반 청크 생성
             if analysis.get('classes'):
+                logger.debug(f"[CHUNK_FILE] 클래스 청크 {len(analysis['classes'])}개 생성 시도")
                 for cls in analysis['classes']:
                     chunk_content = '\n'.join(lines[cls['start_line']-1:cls['end_line']])
                     chunk_id = f"{file_path}::class::{cls['name']}"
@@ -749,10 +750,9 @@ class CodeIndexer:
                         }
                     )
                     chunks.append(chunk)
-            
             # 고정 크기 청크 생성 (함수/클래스가 없는 부분)
-            chunk_size = getattr(settings.indexing, 'chunk_size', 1000)
-            overlap = getattr(settings.indexing, 'chunk_overlap', 200)
+            chunk_size = 1000
+            overlap = 200
             
             # 이미 처리된 라인들 추적
             processed_lines = set()
@@ -830,6 +830,7 @@ class CodeIndexer:
                 )
                 chunks.append(chunk)
             
+            logger.debug(f"[CHUNK_FILE] 최종 생성된 청크 개수: {len(chunks)} (file_path={file_path})")
         except Exception as e:
             logger.error(f"파일 청킹 실패 {file_path}: {e}")
         
@@ -928,13 +929,12 @@ class CodeIndexer:
             logger.error(f"메타데이터 업데이트 실패: {e}")
     
     async def index_directory(self, directory_path: str = None, max_files: int = None) -> Dict[str, Any]:
+        # 모든 입력 경로를 무조건 /workspace로 고정
+        directory_path = "/workspace"
         try:
             self.indexing_in_progress = True
             self.indexing_progress = 0
             self.indexing_error = None
-            # Use workspace root as default
-            if directory_path is None:
-                directory_path = getattr(settings, 'PROJECT_ROOT', os.getcwd())
             directory_path = Path(directory_path)
             if not directory_path.exists():
                 raise ValueError(f"디렉토리가 존재하지 않습니다: {directory_path}")
@@ -971,6 +971,7 @@ class CodeIndexer:
                     success_count += 1
                 else:
                     error_count += 1
+                    logger.error(f"파일 인덱싱 실패: {files[i]}")
                 if (i + 1) % 10 == 0:
                     logger.info(f"진행상황: {i + 1}/{len(files)} 파일 처리됨")
             self.vector_db._save_index()
@@ -990,7 +991,8 @@ class CodeIndexer:
         except Exception as e:
             self.indexing_in_progress = False
             self.indexing_error = str(e)
-            logger.error(f"디렉토리 인덱싱 실패: {e}")
+            import traceback
+            logger.error(f"디렉토리 인덱싱 실패: {e}\n{traceback.format_exc()}")
             return {'error': str(e)}
     
     def _update_indexing_stats(self, total_files: int, success_count: int):

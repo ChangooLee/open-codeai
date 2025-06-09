@@ -356,3 +356,57 @@ Open CodeAI는 [Continue.dev](https://continue.dev/) 확장(Extension)과 완벽
 2. 다운로드가 완료되면, `offline_packages/codebert-base` 폴더가 정상적으로 생성되어야 합니다.
 
 ---
+
+## 프로젝트별 코드 임베딩/분석 (Docker)
+
+Open CodeAI는 Docker 컨테이너로 실행되며, 분석할 프로젝트의 루트 디렉토리와 명령을 지정하여 실행할 수 있습니다.
+
+### 사용법
+
+```bash
+# [프로젝트_경로] [명령] 형식 (명령: start/stop/restart/status/logs/help)
+./scripts/start.sh /분석할/프로젝트/경로 start
+./scripts/start.sh /분석할/프로젝트/경로
+./scripts/start.sh start  # 현재 디렉토리를 프로젝트로 사용
+```
+- 첫 번째 인자가 존재하는 디렉토리면 프로젝트 경로로 인식, 두 번째 인자가 명령입니다.
+- 첫 번째 인자가 디렉토리가 아니면 명령으로 인식, 프로젝트 경로는 현재 디렉토리로 사용합니다.
+- 명령이 없으면 기본값은 `start`입니다.
+
+- 지정한 경로가 Docker 컨테이너의 `/workspace`로 마운트됩니다.
+- FastAPI 서버는 `/workspace` 내의 코드를 임베딩/분석합니다.
+- 여러 프로젝트를 분석하려면 start.sh를 다른 경로로 반복 실행하면 됩니다.
+
+### 예시
+
+```bash
+./scripts/start.sh ~/projects/my-awesome-project start
+./scripts/start.sh ~/projects/my-awesome-project
+./scripts/start.sh restart  # 현재 디렉토리로 재시작
+```
+
+> **참고:**
+> - 컨테이너 실행 중에는 마운트 경로를 변경할 수 없습니다. 프로젝트를 바꾸려면 컨테이너를 중지 후 다시 실행하세요.
+> - 운영 환경에서는 보안을 위해 꼭 필요한 경로만 마운트하세요.
+
+---
+
+## 📝 고급 로깅 시스템
+
+- **Loguru 기반 고급 로깅**: 모든 요청/응답/에러/성능이 자동 기록됩니다.
+- 로그 파일: `logs/opencodeai.log` (일반), `logs/error.log` (에러), `logs/performance.log` (성능)
+- 로그는 자동 분할/압축/보관(최대 30/90/7일)
+- 로그 레벨, 경로, 보관 주기는 config에서 조정 가능
+
+## 🗃️ Vector DB/Graph DB/임베딩 시스템
+
+- **Vector DB (FAISS)**: 코드 임베딩은 FAISS(HNSW) 인덱스에 저장/검색되며, 인덱스 파일은 `data/vector_index/프로젝트명/`에 자동 저장됩니다.
+- **Graph DB (Neo4j/NetworkX)**: 코드 구조(파일, 함수, 클래스, 의존성, 호출관계 등)는 그래프 DB에 저장됩니다. Neo4j(기본) 또는 NetworkX(컨테이너리스)가 자동 선택되며, 그래프 파일은 `data/graph_db/프로젝트명/`에 저장됩니다.
+- **임베딩 서버/모델**: huggingface 기반 임베딩 모델(`microsoft/codebert-base` 등)을 사용하며, `.env`/`config.yaml`에서 임베딩 모델명, 차원, 경로를 지정할 수 있습니다. 임베딩 API(`/embedding`)를 통해 텍스트/코드 임베딩을 직접 생성할 수 있습니다.
+
+## 🛠️ start.sh, install.sh 주요 기능
+
+- `start.sh`: 프로젝트별 데이터 디렉토리, 벡터/그래프 DB 경로 자동 지정, 다양한 명령(`start`, `stop`, `status`, `logs`) 지원, 로그/상태 확인 기능 내장
+- `install.sh`: 오프라인 패키지 설치, Docker 이미지 빌드, Neo4j/Redis 컨테이너 준비, .env 자동 생성, 데이터 디렉토리 자동 생성, GPU/CPU 환경 자동 감지 등 완전 자동화
+
+---

@@ -3,8 +3,11 @@
 """
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Any
 from loguru import logger
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def setup_logger(
@@ -33,7 +36,7 @@ def setup_logger(
                "<level>{level: <8}</level> | "
                "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
                "<level>{message}</level>",
-        level=log_level,
+        level="DEBUG",
         colorize=True,
         backtrace=True,
         diagnose=True
@@ -48,7 +51,7 @@ def setup_logger(
         logger.add(
             log_path / "opencodeai.log",
             format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} | {message}",
-            level=log_level,
+            level="DEBUG",
             rotation="50 MB",
             retention="30 days",
             compression="gz",
@@ -78,7 +81,7 @@ def setup_logger(
         )
 
 
-def get_logger(name: str) -> "logger":
+def get_logger(name: str) -> Any:
     """
     이름이 지정된 로거 반환
     
@@ -92,14 +95,14 @@ def get_logger(name: str) -> "logger":
 
 
 # 성능 측정용 데코레이터
-def log_performance(func_name: str = None):
+def log_performance(func_name: Optional[str] = None) -> Callable[[Callable], Callable]:
     """함수 실행 시간 로깅 데코레이터"""
-    def decorator(func):
+    def decorator(func: Callable) -> Callable:
         import time
         from functools import wraps
         
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs) -> Any:
             start_time = time.time()
             result = func(*args, **kwargs)
             end_time = time.time()
@@ -111,8 +114,6 @@ def log_performance(func_name: str = None):
             return result
         return wrapper
     return decorator
-
-
 # 기본 로거 설정 (모듈 로드 시 자동 실행)
 try:
     from src.config import settings
@@ -123,3 +124,5 @@ try:
 except ImportError:
     # 설정 파일이 없을 경우 기본 설정 사용
     setup_logger(log_level="INFO")
+
+

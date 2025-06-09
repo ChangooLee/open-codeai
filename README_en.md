@@ -348,3 +348,53 @@ API_KEY=open-codeai-local-key
    python3 -c "from huggingface_hub import snapshot_download; snapshot_download('microsoft/codebert-base', local_dir='offline_packages/codebert-base', local_dir_use_symlinks=False)"
    ```
 2. After download, ensure the `offline_packages/codebert-base` folder exists and contains the model files. 
+
+## Code Embedding/Analysis per Project (Docker)
+
+Open CodeAI runs in a Docker container, and you can specify the project root directory and command when starting the service.
+
+### Usage
+
+```bash
+# [project_directory] [command] format (command: start/stop/restart/status/logs/help)
+./scripts/start.sh /path/to/your/project start
+./scripts/start.sh /path/to/your/project
+./scripts/start.sh start  # Use current directory as project
+```
+- If the first argument is an existing directory, it is used as the project path and the second argument is the command.
+- If the first argument is not a directory, it is treated as the command and the current directory is used as the project path.
+- If no command is given, the default is `start`.
+
+- The specified path will be mounted to `/workspace` inside the Docker container.
+- The FastAPI server will index/embed code under `/workspace`.
+- To analyze multiple projects, simply restart start.sh with a different path.
+
+### Example
+
+```bash
+./scripts/start.sh ~/projects/my-awesome-project start
+./scripts/start.sh ~/projects/my-awesome-project
+./scripts/start.sh restart  # Restart with current directory as project
+```
+
+> **Note:**
+> - You cannot change the mount path while the container is running. To switch projects, stop the container and restart with a new path.
+> - For production, only mount necessary directories for security. 
+
+## 📝 Advanced Logging System
+
+- **Loguru-based advanced logging**: All API requests, responses, errors, and performance metrics are automatically logged.
+- Log files: `logs/opencodeai.log` (general), `logs/error.log` (errors), `logs/performance.log` (performance)
+- Logs are automatically rotated, compressed, and retained (up to 30/90/7 days)
+- Log level, path, and retention can be configured in config.yaml
+
+## 🗃️ Vector DB/Graph DB/Embedding System
+
+- **Vector DB (FAISS)**: Code embeddings are stored/searched in a FAISS (HNSW) index, with index files automatically saved under `data/vector_index/<project_name>/`.
+- **Graph DB (Neo4j/NetworkX)**: Code structure (files, functions, classes, dependencies, call relations, etc.) is stored in a graph DB. Neo4j (default) or NetworkX (containerless) is automatically selected, with graph files saved under `data/graph_db/<project_name>/`.
+- **Embedding server/model**: Uses Huggingface-based embedding models (e.g., `microsoft/codebert-base`), configurable via `.env`/`config.yaml`. Embedding API (`/embedding`) allows direct text/code embedding.
+
+## 🛠️ start.sh, install.sh Key Features
+
+- `start.sh`: Automatically sets up project-specific data directories, vector/graph DB paths, supports various commands (`start`, `stop`, `status`, `logs`), and includes log/status checking.
+- `install.sh`: Fully automates offline package installation, Docker image build, Neo4j/Redis container setup, .env auto-generation, data directory creation, and GPU/CPU environment detection. 

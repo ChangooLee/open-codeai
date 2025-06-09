@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 import json
 
@@ -411,6 +411,12 @@ async def index_project(
     rag_system = Depends(get_rag_system)
 ) -> Dict[str, Any]:
     """프로젝트 인덱싱 API"""
+    
+    if getattr(rag_system.indexer, 'indexing_in_progress', False):
+        return JSONResponse(status_code=429, content={
+            "status": "indexing_in_progress",
+            "message": "인덱싱 중입니다. 인덱싱이 끝난 후 다시 시도해 주세요."
+        })
     
     try:
         logger.info(f"프로젝트 인덱싱 요청: {request.project_path}")

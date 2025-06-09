@@ -24,12 +24,56 @@ log_error() {
     echo -e "\033[1;31m[ERROR]\033[0m $1"
 }
 
+# 개발 모드 여부 확인 (기본값: 개발 모드)
+DEV_MODE=1
+
+# 프로젝트 경로 인자 처리
+if [[ -n "$1" && -d "$1" ]]; then
+    PROJECT_PATH="$1"
+    shift
+else
+    PROJECT_PATH="$(pwd)"
+fi
+COMMAND="${1:-start}"
+PROJECT_BASENAME=$(basename "$PROJECT_PATH")
+
+# 컨테이너 내부에서 사용할 경로로 환경변수 지정
+VECTOR_INDEX_PATH="/app/data/vector_index/$PROJECT_BASENAME"
+GRAPH_DB_PATH="/app/data/graph_db/$PROJECT_BASENAME"
+METADATA_DB_PATH="/app/data/metadata/${PROJECT_BASENAME}.db"
+export PROJECT_PATH
+export PROJECT_BASENAME
+export VECTOR_INDEX_PATH
+export GRAPH_DB_PATH
+export METADATA_DB_PATH
+
+# Ensure DB parent directories exist on host
+mkdir -p "$(pwd)/data/vector_index/$PROJECT_BASENAME"
+mkdir -p "$(pwd)/data/graph_db/$PROJECT_BASENAME"
+mkdir -p "$(pwd)/data/metadata"
+
 # 서버 시작 함수
 start_services() {
     log_info "🚀 Open CodeAI 서비스 시작 중..."
     cd "$(dirname "$0")/.."
     
-    # Docker 서비스 시작
+    # Docker 서비스 시작 (개발 모드: uvicorn --reload)
+    if [[ "$DEV_MODE" == "1" ]]; then
+        log_info "개발 모드(uvicorn --reload)로 API 컨테이너 실행"
+        if command -v docker-compose &> /dev/null; then
+            docker-compose up -d --build
+            docker-compose exec -T api pkill -f "uvicorn" || true
+            docker-compose exec -d api uvicorn src.main:app --host 0.0.0.0 --port 8800 --reload
+        elif command -v docker &> /dev/null && command -v compose &> /dev/null; then
+            docker compose up -d --build
+            docker compose exec -T api pkill -f "uvicorn" || true
+            docker compose exec -d api uvicorn src.main:app --host 0.0.0.0 --port 8800 --reload
+        else
+            log_error "Docker Compose를 찾을 수 없습니다"
+            exit 1
+        fi
+    else
+        # 프로덕션 모드
     if command -v docker-compose &> /dev/null; then
         docker-compose up -d
     elif command -v docker &> /dev/null && command -v compose &> /dev/null; then
@@ -37,6 +81,7 @@ start_services() {
     else
         log_error "Docker Compose를 찾을 수 없습니다"
         exit 1
+        fi
     fi
     
     # 서비스 준비 대기
@@ -121,7 +166,7 @@ show_logs() {
 
 # 메인 함수
 main() {
-    case "${1:-start}" in
+    case "$COMMAND" in
         "start")
             start_services
             ;;
@@ -140,18 +185,13 @@ main() {
             show_logs
             ;;
         "help"|"--help"|"-h")
-            echo "사용법: $0 [명령]"
+            echo "사용법: $0 [프로젝트_경로] [명령]"
             echo ""
-            echo "명령:"
-            echo "  start    서버 시작 (기본값)"
-            echo "  stop     서버 중지"
-            echo "  restart  서버 재시작"
-            echo "  status   서버 상태 확인"
-            echo "  logs     최근 로그 표시"
-            echo "  help     도움말 표시"
+            echo "프로젝트_경로: 분석할 프로젝트의 루트 디렉토리 (기본값: 현재 디렉토리)"
+            echo "명령: start(기본값), stop, restart, status, logs, help"
             ;;
         *)
-            log_error "알 수 없는 명령: $1"
+            log_error "알 수 없는 명령: $COMMAND"
             echo "도움말: $0 help"
             exit 1
             ;;

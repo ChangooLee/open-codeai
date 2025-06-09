@@ -12,8 +12,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./configs:/app/configs
-      # 프로젝트 코드 마운트 (인덱싱용)
-      - ${PROJECT_PATH:-./}:/workspace:ro
+      - ${PROJECT_PATH}:/workspace:ro
     depends_on:
       - neo4j
       - redis
@@ -23,13 +22,10 @@ services:
       - NEO4J_PASSWORD=opencodeai
       - REDIS_URL=redis://redis:8637
       - EMBEDDING_MODEL_ENDPOINT=http://embedding:9000/embedding
+      - VECTOR_INDEX_PATH=/app/data/vector_index/${PROJECT_BASENAME}
+      - GRAPH_DB_PATH=/app/data/graph_db/${PROJECT_BASENAME}
+      - METADATA_DB_PATH=/app/data/metadata/${PROJECT_BASENAME}.db
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8800/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
 
   neo4j:
     image: neo4j:5.15-community
@@ -90,7 +86,7 @@ services:
     command: ["uvicorn", "src.utils.embedding_server:app", "--host", "0.0.0.0", "--port", "9000"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/embedding"]
+      test: ["CMD", "curl", "-f", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"texts":["healthcheck"]}', "http://localhost:9000/embedding"]
       interval: 30s
       timeout: 10s
       retries: 3
