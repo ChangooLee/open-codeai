@@ -150,74 +150,73 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"인덱스 저장 실패: {e}")
     
-    async def add_chunks(self, chunks: List[CodeChunk], retry: bool = False) -> bool:
-        logger.warning(f"[DEBUG] add_chunks 진입: 입력 청크 개수={len(chunks) if chunks else 0}")
+    async def add_chunks(self, chunks: List[CodeChunk]) -> bool:
+        """청크를 벡터 DB에 추가
+        
+        Args:
+            chunks: 추가할 청크 리스트
+            
+        Returns:
+            성공 여부
+        """
         if not chunks:
-            logger.error("add_chunks: 입력 청크가 없습니다. (return False)")
             return False
+        
         try:
-            llm_manager = get_llm_manager()
+            # 첫 번째 청크의 임베딩 차원 검증
+            first_chunk = chunks[0]
+            if not first_chunk.embedding:
+                logger.error("임베딩이 없는 청크가 있습니다")
+                return False
+            
+            actual_dim = len(first_chunk.embedding)
+            if actual_dim != self.dimension:
+                error_msg = f"임베딩 차원 불일치: {actual_dim} != {self.dimension}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            
+            # 모든 청크의 임베딩 차원 검증
             embeddings = []
             valid_chunks = []
-            for idx, chunk in enumerate(chunks):
-                logger.warning(f"[DEBUG] add_chunks: 처리중 chunk[{idx}] id={chunk.id} file={chunk.file_path}")
-                if chunk.embedding is None:
-                    embedding_text = f"{chunk.file_path}\n{chunk.content}"
-                    logger.warning(f"[DEBUG] 임베딩 생성 시작: {chunk.id}")
-                    embedding = await llm_manager.generate_embedding(embedding_text)
-                    logger.warning(f"[DEBUG] 임베딩 생성 결과: {chunk.id} → {type(embedding)} 길이={len(embedding) if embedding else 'None'}")
-                    chunk.embedding = embedding
-                if chunk.embedding is None or not isinstance(chunk.embedding, list) or len(chunk.embedding) == 0:
-                    logger.error(f"임베딩 생성 실패: {chunk.file_path} ({chunk.id}) - 결과: {chunk.embedding} (return False)")
+            for chunk in chunks:
+                if not chunk.embedding:
+                    logger.warning(f"임베딩이 없는 청크 건너뜀: {chunk.file_path} ({chunk.id})")
                     continue
-                if len(chunk.embedding) == self.dimension:
-                    embeddings.append(chunk.embedding)
-                    valid_chunks.append(chunk)
-                else:
-                    logger.error(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension} - {chunk.file_path} ({chunk.id}) (return False)")
+                
+                if len(chunk.embedding) != self.dimension:
+                    logger.error(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension} - {chunk.file_path} ({chunk.id})")
+                    continue
+                
+                embeddings.append(chunk.embedding)
+                valid_chunks.append(chunk)
+            
             if not valid_chunks:
-                logger.error(f"add_chunks: 유효한 청크가 하나도 없습니다. (입력: {len(chunks)}개, 예시 id: {[chunk.id for chunk in chunks[:3]]}) (return False)")
-                for idx, chunk in enumerate(chunks[:5]):
-                    logger.error(f"[DEBUG] 청크 요약[{idx}]: id={chunk.id} file={chunk.file_path} content_len={len(chunk.content)} embedding={chunk.embedding}")
+                logger.error("유효한 청크가 없습니다")
                 return False
-            with self._lock:
-                if not HAS_FAISS:
-                    logger.error("add_chunks: FAISS 미설치 상태 (return False)")
-                    return False
-                if self.index is None:
-                    logger.error("add_chunks: self.index가 None (return False)")
-                    return False
-                embeddings_array = np.array(embeddings, dtype=np.float32)
-                try:
-                    self.index.add(embeddings_array)
-                except AssertionError as ae:
-                    logger.error(f"add_chunks: FAISS AssertionError(차원 불일치 등): {ae}. 인덱스 파일/메타데이터 자동 삭제 및 재초기화 시도")
-                    import os
-                    index_file = f"{self.index_path}/vector.index"
-                    metadata_file = f"{self.index_path}/metadata.json"
-                    if os.path.exists(index_file):
-                        os.remove(index_file)
-                    if os.path.exists(metadata_file):
-                        os.remove(metadata_file)
-                    self._initialize_index()
-                    if not retry:
-                        logger.warning("add_chunks: 인덱스 재초기화 후 1회 재시도")
-                        return await self.add_chunks(chunks, retry=True)
-                    else:
-                        logger.error("add_chunks: 인덱스 재초기화 후에도 실패. 무한루프 방지. (return False)")
-                        return False
+            
+            # FAISS 인덱스에 추가
+            try:
+                self.index.add(np.array(embeddings))
+            except AssertionError as e:
+                if "dimension" in str(e):
+                    # 차원 불일치로 인한 오류 - 인덱스 재생성
+                    logger.warning("FAISS 인덱스 차원 불일치, 재생성 시도")
+                    self.index = faiss.IndexFlatL2(self.dimension)
+                    self.index.add(np.array(embeddings))
+                else:
+                    raise
+                
+            # 청크 맵과 파일 인덱스 업데이트
             for chunk in valid_chunks:
                 self.chunk_map[chunk.id] = chunk
                 if chunk.file_path not in self.file_index:
                     self.file_index[chunk.file_path] = []
-                if chunk.id not in self.file_index[chunk.file_path]:
-                    self.file_index[chunk.file_path].append(chunk.id)
-            if len(self.chunk_map) % 100 == 0:
-                self._save_index()
-            logger.info(f"벡터 DB에 {len(valid_chunks)} 청크 추가됨")
+                self.file_index[chunk.file_path].append(chunk.id)
+            
             return True
+            
         except Exception as e:
-            logger.error(f"청크 추가 실패: {e}\n{traceback.format_exc()}")
+            logger.error(f"청크 추가 실패: {e}")
             return False
     
     async def search(self, query: str, k: int = 10) -> List[SearchResult]:
@@ -494,67 +493,75 @@ class GraphDatabase:
         self.graph.add_edge(from_file, to_file, relationship='depends_on', type=import_type)
     
     def find_related_files(self, file_path: str, max_depth: int = 2) -> List[Dict[str, Any]]:
-        logger.debug(f"[GraphDB] find_related_files 진입: file_path={file_path}, max_depth={max_depth}")
-        try:
-            with self._lock:
-                if self.use_neo4j:
-                    logger.debug("[GraphDB] Neo4j 분기")
-                    result = self._find_neo4j_related_files(file_path, max_depth)
-                else:
-                    logger.debug("[GraphDB] NetworkX 분기")
-                    result = self._find_networkx_related_files(file_path, max_depth)
-            logger.info(f"[GraphDB] 관련 파일 {len(result)}개 탐색됨 (file: {file_path})")
-            return result
-        except Exception as e:
-            logger.error(f"관련 파일 검색 실패: {e}")
-            return []
-    
-    def _find_neo4j_related_files(self, file_path: str, max_depth: int) -> List[Dict[str, Any]]:
-        """Neo4j에서 관련 파일 검색"""
-        with self.driver.session() as session:
-            result = session.run(
-                """
-                MATCH (start:File {path: $file_path})
-                MATCH (start)-[*1..$max_depth]-(related:File)
-                WHERE related.path <> $file_path
-                RETURN DISTINCT related.path as path, 
-                       related.name as name,
-                       related.language as language
-                LIMIT 20
-                """,
-                file_path=file_path,
-                max_depth=max_depth
-            )
+        """관련 파일 찾기
+        
+        Args:
+            file_path: 기준 파일 경로
+            max_depth: 탐색 깊이 (기본값: 2)
             
-            return [dict(record) for record in result]
-    
-    def _find_networkx_related_files(self, file_path: str, max_depth: int) -> List[Dict[str, Any]]:
-        """NetworkX에서 관련 파일 검색"""
-        if file_path not in self.graph:
+        Returns:
+            관련 파일 정보 리스트
+        """
+        if not self.graph.has_node(file_path):
             return []
         
-        related_files = []
         visited = set()
+        related_files = []
         
-        def dfs(node, depth):
+        def dfs(node: str, depth: int, weight: float = 1.0):
+            """깊이 우선 탐색으로 관련 파일 찾기
+            
+            Args:
+                node: 현재 노드
+                depth: 현재 깊이
+                weight: 관계 가중치 (깊이에 따라 감소)
+            """
             if depth > max_depth or node in visited:
                 return
             
             visited.add(node)
             
+            # 현재 노드의 이웃 탐색
             for neighbor in self.graph.neighbors(node):
-                if neighbor != file_path and self.graph.nodes[neighbor].get('type') == 'file':
+                if neighbor == file_path:
+                    continue
+                
+                # 파일 노드인 경우 결과에 추가
+                if self.graph.nodes[neighbor].get('type') == 'file':
+                    # 관계 정보 수집
+                    edge_data = self.graph.get_edge_data(node, neighbor)
+                    relationship = edge_data.get('relationship', 'unknown') if edge_data else 'unknown'
+                    
+                    # 가중치 계산 (깊이와 관계 유형에 따라)
+                    current_weight = weight * (0.8 ** depth)  # 깊이에 따라 가중치 감소
+                    if relationship in ['imports', 'depends_on']:
+                        current_weight *= 1.2  # 직접적인 의존성은 가중치 증가
+                    
                     related_files.append({
-                        'path': neighbor,
-                        'name': self.graph.nodes[neighbor].get('name', ''),
-                        'language': self.graph.nodes[neighbor].get('language', 'unknown')
+                        'file_path': neighbor,
+                        'relationship': relationship,
+                        'depth': depth,
+                        'weight': current_weight,
+                        'metadata': self.graph.nodes[neighbor].get('metadata', {})
                     })
                 
+                # 다음 깊이 탐색
                 if depth < max_depth:
-                    dfs(neighbor, depth + 1)
-        
+                    dfs(neighbor, depth + 1, weight * 0.8)
+                
+        # 탐색 시작
         dfs(file_path, 0)
-        return related_files[:20]
+        
+        # 가중치 기준 정렬 및 중복 제거
+        seen = set()
+        unique_files = []
+        for file_info in sorted(related_files, key=lambda x: (-x['weight'], x['depth'])):
+            if file_info['file_path'] not in seen:
+                seen.add(file_info['file_path'])
+                unique_files.append(file_info)
+        
+        # 최대 20개 반환
+        return unique_files[:20]
     
     def save_graph(self):
         """그래프 저장"""

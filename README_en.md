@@ -424,27 +424,32 @@ Open CodeAI runs in a Docker container, and you can specify the project root dir
 # [project_directory] [command] format (command: start/stop/restart/status/logs/help)
 ./scripts/start.sh /path/to/your/project start
 ./scripts/start.sh /path/to/your/project
+./scripts/start.sh /path/to/your/project restart  # Restart with specific project path
 ./scripts/start.sh start  # Use current directory as project
+./scripts/start.sh restart  # Restart with current directory as project
 ```
 - If the first argument is an existing directory, it is used as the project path and the second argument is the command.
 - If the first argument is not a directory, it is treated as the command and the current directory is used as the project path.
 - If no command is given, the default is `start`.
-
-- The specified path will be mounted to `/workspace` inside the Docker container.
-- The FastAPI server will index/embed code under `/workspace`.
-- To analyze multiple projects, simply restart start.sh with a different path.
+- The `restart` command will:
+  1. Stop all running services (API server, Neo4j, etc.)
+  2. Wait for 2 seconds to ensure clean shutdown
+  3. Restart all services with the current configuration
+  4. In development mode, it will use uvicorn --reload for hot-reloading
 
 ### Example
 
 ```bash
 ./scripts/start.sh ~/projects/my-awesome-project start
 ./scripts/start.sh ~/projects/my-awesome-project
+./scripts/start.sh ~/projects/my-awesome-project restart  # Restart with specific project
 ./scripts/start.sh restart  # Restart with current directory as project
 ```
 
 > **Note:**
 > - You cannot change the mount path while the container is running. To switch projects, stop the container and restart with a new path.
-> - For production, only mount necessary directories for security. 
+> - For production, only mount necessary directories for security.
+> - The restart command is useful when you need to reload configuration changes or when services become unresponsive.
 
 ## 📝 Advanced Logging System
 

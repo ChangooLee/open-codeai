@@ -659,7 +659,7 @@ class EnhancedLLMManager:
                 if function_calls:
                     print(f"[EnhancedLLMManager] 함수 호출 감지: {len(function_calls)}개")
                     
-                    call_results = await self.function_parser.process_function_calls(function_calls)
+                    call_results = await self._process_function_calls(function_calls)
                     
                     final_prompt = f"""이전 응답: {response}
 
@@ -728,9 +728,9 @@ class EnhancedLLMManager:
         return "\n".join(functions_info)
     
     def _format_function_results(self, results: List[Dict[str, Any]]) -> str:
-        """함수 실행 결과 포맷팅"""
-        formatted_results = []
+        """함수 실행 결과 포맷팅
         
+        Args:
         for result in results:
             func_name = result['function_name']
             func_result = result['result']
@@ -741,6 +741,69 @@ class EnhancedLLMManager:
                 formatted_results.append(f"❌ {func_name}: 실패 - {func_result.get('message', '알 수 없는 오류')}")
         
         return "\n\n".join(formatted_results)
+
+    async def _process_function_calls(self, function_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """함수 호출 처리
+        
+        Args:
+            function_calls: 함수 호출 정보 리스트
+            
+        Returns:
+            함수 실행 결과 리스트
+        """
+        results = []
+        for call in function_calls:
+            try:
+                # 필수 키 검증
+                func_name = call.get('name')
+                args = call.get('arguments')
+                if not func_name or args is None:
+                    logger.warning(f"잘못된 함수 호출 형식: {call}")
+                    continue
+                    
+                # 함수 실행
+                result = await self.registry.call_function(func_name, args)
+                
+                # 결과 검증
+                if not isinstance(result, dict):
+                    result = {'status': 'error', 'message': f'잘못된 반환 형식: {type(result)}'}
+                
+                # 필수 키 추가
+                result['function_name'] = func_name
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"함수 호출 실패 ({func_name}): {e}")
+                results.append({
+                    'function_name': func_name,
+                    'status': 'error',
+                    'message': f'함수 실행 중 오류 발생: {str(e)}'
+                })
+        
+        return results
+
+    def _format_function_results(self, results: List[Dict[str, Any]]) -> str:
+        """함수 실행 결과 포맷팅
+        
+        Args:
+            results: 함수 실행 결과 리스트
+            
+        Returns:
+            포맷팅된 결과 문자열
+        """
+        formatted = []
+        for result in results:
+            func_name = result.get('function_name', 'unknown')
+            status = result.get('status', 'unknown')
+            message = result.get('message', '')
+            
+            formatted.append(f"Function: {func_name}")
+            formatted.append(f"Status: {status}")
+            if message:
+                formatted.append(f"Message: {message}")
+            formatted.append("---")
+        
+        return "\n".join(formatted)
 
 # 전역 Function Call Registry 인스턴스
 _function_registry_instance = None

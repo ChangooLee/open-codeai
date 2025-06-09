@@ -148,22 +148,34 @@ async def stream_response(content: str, model: str, request_id: str) -> AsyncGen
     
     yield "data: [DONE]\n\n"
 
-def format_for_continue_extension(response: str) -> str:
+def format_for_continue_extension(code_content: str, language: str = None, file_hint: str = None) -> str:
+    """Continue 확장을 위한 코드 블록 포맷팅
+    
+    Args:
+        code_content: 코드 내용
+        language: 코드 언어 (예: python, javascript)
+        file_hint: 파일 경로 힌트 (예: src/main.py)
+    
+    Returns:
+        Continue 확장이 인식할 수 있는 형식의 코드 블록
     """
-    Continue Extension이 인식할 수 있도록 코드 블록의 파일 경로를 보강/정규화합니다.
-    """
-    def enhance_code_block(match):
-        language = match.group(1)
-        file_hint = match.group(2).strip()
-        code_content = match.group(3)
-        # /workspace/, ./, ../ 등 접두어 제거 (루트 기준 상대경로로)
-        file_hint = re.sub(r'^(?:\.?/)?workspace/', '', file_hint)
-        file_hint = re.sub(r'^\./', '', file_hint)
-        file_hint = re.sub(r'^\.\./', '', file_hint)
-        return f"```{language} {file_hint}\n{code_content}\n```"
-
-    code_block_pattern = r'```(\w+)\s+([^\n]*)\n(.*?)```'
-    return re.sub(code_block_pattern, enhance_code_block, response, flags=re.DOTALL)
+    # 언어가 없는 경우 텍스트로 처리
+    if not language:
+        language = "text"
+    
+    # 파일 경로 정규화
+    if file_hint:
+        # /workspace/, ./, ../ 등의 경로 prefix 제거
+        file_hint = file_hint.replace("/workspace/", "").replace("./", "").replace("../", "")
+        # 절대 경로를 상대 경로로 변환
+        if file_hint.startswith("/"):
+            file_hint = file_hint[1:]
+    
+    # IntelliJ와 VSCode 모두에서 인식되도록 정확한 포맷팅
+    # 1. 언어와 파일 경로 사이에 정확히 한 칸의 공백
+    # 2. 파일 경로가 없는 경우 공백 없음
+    # 3. 코드 블록 시작과 끝에 정확히 세 개의 백틱
+    return f"```{language}{(' ' + file_hint) if file_hint else ''}\n{code_content}\n```"
 
 def extract_explanation_and_codeblocks(response: str) -> str:
     """

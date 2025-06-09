@@ -454,11 +454,18 @@ Open CodeAI는 Docker 컨테이너로 실행되며, 분석할 프로젝트의 �
 # [프로젝트_경로] [명령] 형식 (명령: start/stop/restart/status/logs/help)
 ./scripts/start.sh /분석할/프로젝트/경로 start
 ./scripts/start.sh /분석할/프로젝트/경로
+./scripts/start.sh /분석할/프로젝트/경로 restart  # 특정 프로젝트 경로로 재시작
 ./scripts/start.sh start  # 현재 디렉토리를 프로젝트로 사용
+./scripts/start.sh restart  # 현재 디렉토리로 재시작
 ```
 - 첫 번째 인자가 존재하는 디렉토리면 프로젝트 경로로 인식, 두 번째 인자가 명령입니다.
 - 첫 번째 인자가 디렉토리가 아니면 명령으로 인식, 프로젝트 경로는 현재 디렉토리로 사용합니다.
 - 명령이 없으면 기본값은 `start`입니다.
+- `restart` 명령은 다음과 같이 동작합니다:
+  1. 실행 중인 모든 서비스(API 서버, Neo4j 등)를 중지
+  2. 깔끔한 종료를 위해 2초 대기
+  3. 현재 설정으로 모든 서비스 재시작
+  4. 개발 모드에서는 uvicorn --reload로 핫 리로딩 지원
 
 - 지정한 경로가 Docker 컨테이너의 `/workspace`로 마운트됩니다.
 - FastAPI 서버는 `/workspace` 내의 코드를 임베딩/분석합니다.
@@ -469,12 +476,14 @@ Open CodeAI는 Docker 컨테이너로 실행되며, 분석할 프로젝트의 �
 ```bash
 ./scripts/start.sh ~/projects/my-awesome-project start
 ./scripts/start.sh ~/projects/my-awesome-project
+./scripts/start.sh ~/projects/my-awesome-project restart  # 특정 프로젝트로 재시작
 ./scripts/start.sh restart  # 현재 디렉토리로 재시작
 ```
 
 > **참고:**
 > - 컨테이너 실행 중에는 마운트 경로를 변경할 수 없습니다. 프로젝트를 바꾸려면 컨테이너를 중지 후 다시 실행하세요.
 > - 운영 환경에서는 보안을 위해 꼭 필요한 경로만 마운트하세요.
+> - restart 명령은 설정 변경 후 재시작이 필요하거나 서비스가 응답하지 않을 때 유용합니다.
 
 ---
 
