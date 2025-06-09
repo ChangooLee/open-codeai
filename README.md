@@ -217,27 +217,25 @@ $ ./index.sh /path/to/your/project
 
 ## ⚙️ 설정 자동화 및 주요 옵션
 
-- **config.yaml** 하나로 모든 설정 관리 (모델/DB/성능/모드 등)
-- `scripts/generate_env.py`로 .env 자동 생성 (config.yaml 변경 시 실행)
+- **.env** 파일로 모든 설정 관리 (모델/DB/성능/모드 등)
+- `scripts/generate_env.py`로 .env 자동 생성
 - 주요 옵션 예시:
-```yaml
-llm:
-  main_model:
-    name: "qwen2.5-coder-32b"
-    path: "./data/models/qwen2.5-coder-32b"
-    use_vllm: true
-    quantize: "4bit"   # none, 4bit, 8bit
-    device: "auto"
-database:
-  graph:
-    type: "networkx"   # neo4j or networkx
-    auto_select: true
-  vector:
-    sharding: true
-performance:
-  gpu:
-    enable: true
-    mixed_precision: true
+```env
+# LLM 설정
+LLM_MODEL_NAME=qwen2.5-coder-32b
+LLM_MODEL_PATH=./data/models/qwen2.5-coder-32b
+USE_VLLM=true
+QUANTIZE=4bit
+DEVICE=auto
+
+# 데이터베이스 설정
+GRAPH_DB_TYPE=networkx
+GRAPH_DB_AUTO_SELECT=true
+VECTOR_DB_SHARDING=true
+
+# 성능 설정
+GPU_ENABLE=true
+MIXED_PRECISION=true
 ```
 
 ---
@@ -245,10 +243,10 @@ performance:
 ## 🧩 다양한 실행 모드/확장성
 
 - **오프라인 설치**: offline_packages/, data/models/ 폴더만 있으면 인터넷 불필요
-- **컨테이너리스**: config.yaml에서 `database.graph.type: networkx` 설정, Neo4j/Redis 미사용
+- **컨테이너리스**: .env에서 `GRAPH_DB_TYPE=networkx` 설정, Neo4j/Redis 미사용
 - **최소 모드**: `--minimal` 플래그, 모니터링/Continue.dev 비활성화
-- **양자화/샤딩**: `llm.main_model.quantize: 4bit`, `database.vector.sharding: true`
-- **Neo4j 미사용**: `./install.sh --no-neo4j` 또는 config에서 networkx 지정
+- **양자화/샤딩**: `QUANTIZE=4bit`, `VECTOR_DB_SHARDING=true`
+- **Neo4j 미사용**: `./install.sh --no-neo4j` 또는 .env에서 networkx 지정
 
 ---
 
@@ -277,13 +275,13 @@ performance:
   - offline_packages/, data/models/ 폴더에 파일이 있는지 확인
   - install.sh 실행 시 로그/에러 메시지 확인
 - **Q. Neo4j 없이 실행하고 싶어요**
-  - `./install.sh --no-neo4j` 또는 config.yaml에서 `database.graph.type: networkx` 지정
+  - `./install.sh --no-neo4j` 또는 .env에서 networkx 지정
 - **Q. 모델/패키지 버전이 맞지 않아요**
   - config.yaml, requirements.txt, offline_packages/ 버전 일치 확인
 - **Q. 인덱싱이 느려요/메모리 부족**
   - config.yaml에서 parallel_workers, memory_limit_gb, chunk_size 등 조정
 - **Q. vLLM 환경에서 인증 오류가 발생해요**
-  - 중앙 서버의 vLLM 엔드포인트 주소와 API Key가 올바른지 `.env` 파일에서 확인
+  - 중앙 서버의 vLLM 엔드포인트 주소와 API Key가 올바른지 .env 파일에서 확인
   - 반드시 Authorization 헤더(`Bearer ...`)로 인증해야 하며, body에 api_key를 넣지 않아야 함
   - configs/ 등 하위 폴더에 환경설정 파일이 남아있지 않은지 확인
 - **Q. docker-compose build를 따로 해야 하나요?**
@@ -360,7 +358,7 @@ Open CodeAI는 [Continue.dev](https://continue.dev/) 확장(Extension)과 완벽
 ### 2. Open CodeAI API 서버 주소 설정
 - 확장 설정에서 `API_BASE_URL`을 아래와 같이 입력하세요:
   - `http://localhost:8800` (로컬에서 docker-compose로 띄운 경우)
-- 인증 토큰 등 추가 설정은 `.env` 파일 및 내부 정책에 맞게 적용
+- 인증 토큰 등 추가 설정은 .env 파일 및 내부 정책에 맞게 적용
 
 ### 3. 연동 확인
 - IDE 내에서 Continue 패널을 열고, 정상적으로 Open CodeAI와 대화/코드 생성이 되는지 확인
@@ -498,7 +496,7 @@ Open CodeAI는 Docker 컨테이너로 실행되며, 분석할 프로젝트의 �
 
 - **Vector DB (FAISS)**: 코드 임베딩은 FAISS(HNSW) 인덱스에 저장/검색되며, 인덱스 파일은 `data/vector_index/프로젝트명/`에 자동 저장됩니다.
 - **Graph DB (Neo4j/NetworkX)**: 코드 구조(파일, 함수, 클래스, 의존성, 호출관계 등)는 그래프 DB에 저장됩니다. Neo4j(기본) 또는 NetworkX(컨테이너리스)가 자동 선택되며, 그래프 파일은 `data/graph_db/프로젝트명/`에 저장됩니다.
-- **임베딩 서버/모델**: huggingface 기반 임베딩 모델(`microsoft/codebert-base` 등)을 사용하며, `.env`/`config.yaml`에서 임베딩 모델명, 차원, 경로를 지정할 수 있습니다. 임베딩 API(`/embedding`)를 통해 텍스트/코드 임베딩을 직접 생성할 수 있습니다.
+- **임베딩 서버/모델**: huggingface 기반 임베딩 모델(`microsoft/codebert-base` 등)을 사용하며, .env/config.yaml에서 임베딩 모델명, 차원, 경로를 지정할 수 있습니다. 임베딩 API(`/embedding`)를 통해 텍스트/코드 임베딩을 직접 생성할 수 있습니다.
 
 ## 🛠️ start.sh, install.sh 주요 기능
 

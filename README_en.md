@@ -203,40 +203,38 @@ $ ./index.sh /path/to/your/project
 
 ---
 
-## ⚙️ Automated Configuration & Key Options
+## ⚙️ Automated Configuration and Key Options
 
-- Manage all settings in **config.yaml** (models/DB/performance/modes, etc.)
-- Use `scripts/generate_env.py` to auto-generate .env (run after config.yaml changes)
-- Example options:
-```yaml
-llm:
-  main_model:
-    name: "qwen2.5-coder-32b"
-    path: "./data/models/qwen2.5-coder-32b"
-    use_vllm: true
-    quantize: "4bit"   # none, 4bit, 8bit
-    device: "auto"
-database:
-  graph:
-    type: "networkx"   # neo4j or networkx
-    auto_select: true
-  vector:
-    sharding: true
-performance:
-  gpu:
-    enable: true
-    mixed_precision: true
+- **.env** file for managing all settings (models/DB/performance/modes)
+- `scripts/generate_env.py` for automatic .env generation
+- Key options example:
+```env
+# LLM Settings
+LLM_MODEL_NAME=qwen2.5-coder-32b
+LLM_MODEL_PATH=./data/models/qwen2.5-coder-32b
+USE_VLLM=true
+QUANTIZE=4bit
+DEVICE=auto
+
+# Database Settings
+GRAPH_DB_TYPE=networkx
+GRAPH_DB_AUTO_SELECT=true
+VECTOR_DB_SHARDING=true
+
+# Performance Settings
+GPU_ENABLE=true
+MIXED_PRECISION=true
 ```
 
 ---
 
-## 🧩 Various Modes/Extensibility
+## 🧩 Various Execution Modes/Extensibility
 
-- **Offline install**: Only need offline_packages/, data/models/ folders, no internet required
-- **Containerless**: Set `database.graph.type: networkx` in config.yaml, no Neo4j/Redis
-- **Minimal mode**: `--minimal` flag, disables monitoring/Continue.dev
-- **Quantization/Sharding**: `llm.main_model.quantize: 4bit`, `database.vector.sharding: true`
-- **No Neo4j**: `./install.sh --no-neo4j` or set networkx in config
+- **Offline Installation**: Only needs offline_packages/, data/models/ folders, no internet required
+- **Containerless**: Set `GRAPH_DB_TYPE=networkx` in .env, no Neo4j/Redis
+- **Minimal Mode**: `--minimal` flag, disables monitoring/Continue.dev
+- **Quantization/Sharding**: `QUANTIZE=4bit`, `VECTOR_DB_SHARDING=true`
+- **No Neo4j**: `./install.sh --no-neo4j` or specify networkx in .env
 
 ---
 

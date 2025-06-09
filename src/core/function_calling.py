@@ -727,21 +727,6 @@ class EnhancedLLMManager:
         
         return "\n".join(functions_info)
     
-    def _format_function_results(self, results: List[Dict[str, Any]]) -> str:
-        """함수 실행 결과 포맷팅
-        
-        Args:
-        for result in results:
-            func_name = result['function_name']
-            func_result = result['result']
-            
-            if func_result.get('status') == 'success':
-                formatted_results.append(f"✅ {func_name}: 성공\n{json.dumps(func_result, indent=2, ensure_ascii=False)}")
-            else:
-                formatted_results.append(f"❌ {func_name}: 실패 - {func_result.get('message', '알 수 없는 오류')}")
-        
-        return "\n\n".join(formatted_results)
-
     async def _process_function_calls(self, function_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """함수 호출 처리
         

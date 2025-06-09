@@ -344,12 +344,12 @@ def check_file_structure() -> Dict[str, Any]:
     required_structure = {
         'directories': [
             'src', 'src/api', 'src/core', 'src/utils',
-            'configs', 'data', 'logs', 'scripts'
+            'data', 'logs', 'scripts'
         ],
         'files': [
             'src/main.py', 'src/config.py',
             'requirements.txt', '.env.example',
-            'configs/config.yaml', 'docker-compose.yml'
+            'docker-compose.yml'
         ],
         'optional_directories': [
             'data/models', 'data/vector_index', 'data/graph_db',
