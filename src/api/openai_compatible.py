@@ -6,6 +6,7 @@ import time
 import uuid
 from typing import List, Dict, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
+import re
 
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -147,6 +148,43 @@ async def stream_response(content: str, model: str, request_id: str) -> AsyncGen
     
     yield "data: [DONE]\n\n"
 
+def format_for_continue_extension(response: str) -> str:
+    """
+    Continue Extension이 인식할 수 있도록 코드 블록의 파일 경로를 보강/정규화합니다.
+    """
+    def enhance_code_block(match):
+        language = match.group(1)
+        file_hint = match.group(2).strip()
+        code_content = match.group(3)
+        # /workspace/, ./, ../ 등 접두어 제거 (루트 기준 상대경로로)
+        file_hint = re.sub(r'^(?:\.?/)?workspace/', '', file_hint)
+        file_hint = re.sub(r'^\./', '', file_hint)
+        file_hint = re.sub(r'^\.\./', '', file_hint)
+        return f"```{language} {file_hint}\n{code_content}\n```"
+
+    code_block_pattern = r'```(\w+)\s+([^\n]*)\n(.*?)```'
+    return re.sub(code_block_pattern, enhance_code_block, response, flags=re.DOTALL)
+
+def extract_explanation_and_codeblocks(response: str) -> str:
+    """
+    LLM 응답에서 설명+코드블록 쌍만 추출 (불필요한 안내/적용방법 등 제거)
+    여러 쌍이 있으면 모두 반환
+    """
+    codeblock_pattern = r'(```[\w\s./-]*\n.*?```)'  # 코드블록 전체
+    parts = re.split(codeblock_pattern, response, flags=re.DOTALL)
+    result = []
+    for i in range(1, len(parts), 2):
+        explanation = parts[i-1].strip()
+        codeblock = parts[i].strip()
+        # 불필요한 안내/적용방법/추가설명 등은 설명에서 제거
+        if explanation:
+            if any(x in explanation.lower() for x in ["적용 방법", "apply button", "agent mode", "mode selector", "추가적인 도움이 필요하시면"]):
+                explanation = ""
+        if explanation:
+            result.append(explanation)
+        result.append(codeblock)
+    return "\n\n".join(result) if result else response
+
 # API 엔드포인트들
 
 @router.get("/models")
@@ -212,6 +250,8 @@ async def create_chat_completion(
             temperature=request.temperature,
             enable_function_calling=request.enable_function_calling
         )
+        response_text = format_for_continue_extension(response_text)
+        response_text = extract_explanation_and_codeblocks(response_text)
         
         # 토큰 사용량 계산
         prompt_tokens = count_tokens(prompt)

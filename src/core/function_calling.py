@@ -598,8 +598,40 @@ class EnhancedLLMManager:
 ## 사용자 질문:
 {prompt}
 
-## 답변:
-위의 코드 컨텍스트를 참고하여 정확하고 구체적인 답변을 제공하세요. 필요시 코드 예시도 포함하세요."""
+## 답변 작성 지침 (매우 중요):
+- 반드시 먼저 간결한 자연어 설명을 한 문단 이내로 작성하세요.
+- 그 다음, 실제 코드 변경이 필요한 경우 아래 예시처럼 info string(언어 + 프로젝트 루트 기준 상대경로)을 포함한 코드블록을 반드시 제공하세요.
+- 설명과 코드블록은 반드시 분리하세요.
+- 여러 파일을 수정할 경우, 각 파일마다 설명+코드블록 쌍을 반복하세요.
+- diff, 삭제, 추가 등 모든 변경도 info string을 포함한 코드블록으로 작성하세요.
+- 코드블록 외에는 불필요한 요약, 적용 방법, 추가 설명을 넣지 마세요.
+
+예시:
+아래처럼 설명 후 코드블록을 제공합니다.
+
+서비스 배열에 autogen을 추가합니다.
+```javascript data/services.js
+// ... existing code ...
+{
+    name: "autogen",
+    url: "http://121.141.60.219:3004/",
+    icon: "/icons/autogen.png",
+    description: "자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다."
+},
+// ... rest of code ...
+```
+
+또는 diff 예시:
+새 서비스 추가 diff입니다.
+```diff data/services.js
++    {
++        name: "autogen",
++        url: "http://121.141.60.219:3004/",
++        icon: "/icons/autogen.png",
++        description: "자동 생성 서비스로, 필요한 데이터나 코드를 자동으로 생성합니다."
++    },
+```
+"""
                 else:
                     enhanced_prompt = prompt
             else:
