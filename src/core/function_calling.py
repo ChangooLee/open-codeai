@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional, Callable, Union, cast
 from dataclasses import dataclass
 from enum import Enum
 import inspect
+import os
 
 from ..utils.logger import get_logger
 from .rag_system import get_rag_system
@@ -308,7 +309,6 @@ class FunctionCallRegistry:
             # Use workspace root as default
             if not project_path:
                 from src.config import settings
-                import os
                 project_path = getattr(settings, 'PROJECT_ROOT', os.getcwd())
             result = await self.rag_system.indexer.index_directory(project_path, max_files)
             return {
@@ -445,19 +445,28 @@ class FunctionCallRegistry:
             return {"status": "error", "message": str(e)}
     
     async def _analyze_file(self, file_path: str, include_content: bool = False) -> Dict[str, Any]:
-        """파일 분석 핸들러"""
-        try:
-            analyzer = get_code_analyzer()
-            analysis = await analyzer.analyze_file(file_path)
-            if not analysis:
-                return {"status": "error", "message": f"분석 실패: {file_path}"}
-            result = {"status": "success", "analysis": analysis}
-            if include_content:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                    result["content"] = f.read()
-            return result
-        except Exception as e:
-            return {"status": "error", "message": str(e)}
+        """파일 분석 핸들러 (파일명만 입력해도 자동 경로 매핑)"""
+        analyzer = get_code_analyzer()
+        # 1. 입력 경로가 실제 파일인지 확인
+        if not os.path.exists(file_path):
+            # 2. vector DB에서 파일명 기반 경로 검색
+            candidates = self.rag_system.vector_db.search_file_by_name(file_path)
+            if not candidates:
+                # 3. graph DB에서도 시도
+                candidates = self.rag_system.graph_db.search_file_by_name(file_path)
+            if not candidates:
+                return {"status": "error", "message": f"파일을 찾을 수 없습니다: {file_path}"}
+            # 4. 가장 유사한 경로 선택 (여러 개면 모두 분석)
+            file_path = candidates[0]
+        # 5. 기존대로 분석 진행
+        analysis = await analyzer.analyze_file(file_path)
+        if not analysis:
+            return {"status": "error", "message": f"분석 실패: {file_path}"}
+        result = {"status": "success", "analysis": analysis}
+        if include_content:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                result["content"] = f.read()
+        return result
     
     def get_available_functions(self) -> List[Dict[str, Any]]:
         """사용 가능한 함수 목록 (OpenAI 형식)"""

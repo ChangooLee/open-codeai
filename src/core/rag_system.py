@@ -11,6 +11,8 @@ import hashlib
 from datetime import datetime
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import time
+import traceback
 
 try:
     import faiss
@@ -90,7 +92,7 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"벡터 DB 초기화 실패: {e}")
     
-    def _load_index(self):
+    def _load_index(self) -> None:
         """저장된 인덱스 로드"""
         try:
             if not HAS_FAISS:
@@ -119,7 +121,7 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"인덱스 로드 실패: {e}")
     
-    def _save_index(self):
+    def _save_index(self) -> None:
         """인덱스 저장"""
         try:
             if not HAS_FAISS or not self.index:
@@ -148,17 +150,15 @@ class VectorDatabase:
         except Exception as e:
             logger.error(f"인덱스 저장 실패: {e}")
     
-    async def add_chunks(self, chunks: List[CodeChunk]) -> None:
+    async def add_chunks(self, chunks: List[CodeChunk], retry: bool = False) -> bool:
         logger.warning(f"[DEBUG] add_chunks 진입: 입력 청크 개수={len(chunks) if chunks else 0}")
         if not chunks:
-            logger.warning("add_chunks: 입력 청크가 없습니다.")
-            return
-            
+            logger.error("add_chunks: 입력 청크가 없습니다. (return False)")
+            return False
         try:
             llm_manager = get_llm_manager()
             embeddings = []
             valid_chunks = []
-            
             for idx, chunk in enumerate(chunks):
                 logger.warning(f"[DEBUG] add_chunks: 처리중 chunk[{idx}] id={chunk.id} file={chunk.file_path}")
                 if chunk.embedding is None:
@@ -167,38 +167,58 @@ class VectorDatabase:
                     embedding = await llm_manager.generate_embedding(embedding_text)
                     logger.warning(f"[DEBUG] 임베딩 생성 결과: {chunk.id} → {type(embedding)} 길이={len(embedding) if embedding else 'None'}")
                     chunk.embedding = embedding
-                
                 if chunk.embedding is None or not isinstance(chunk.embedding, list) or len(chunk.embedding) == 0:
-                    logger.warning(f"임베딩 생성 실패: {chunk.file_path} ({chunk.id}) - 결과: {chunk.embedding}")
+                    logger.error(f"임베딩 생성 실패: {chunk.file_path} ({chunk.id}) - 결과: {chunk.embedding} (return False)")
                     continue
-
                 if len(chunk.embedding) == self.dimension:
                     embeddings.append(chunk.embedding)
                     valid_chunks.append(chunk)
                 else:
-                    logger.warning(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension} - {chunk.file_path} ({chunk.id})")
-            
+                    logger.error(f"임베딩 차원 불일치: {len(chunk.embedding)} != {self.dimension} - {chunk.file_path} ({chunk.id}) (return False)")
             if not valid_chunks:
-                logger.error(f"add_chunks: 유효한 청크가 하나도 없습니다. (입력: {len(chunks)}개, 예시 id: {[chunk.id for chunk in chunks[:3]]})")
+                logger.error(f"add_chunks: 유효한 청크가 하나도 없습니다. (입력: {len(chunks)}개, 예시 id: {[chunk.id for chunk in chunks[:3]]}) (return False)")
                 for idx, chunk in enumerate(chunks[:5]):
                     logger.error(f"[DEBUG] 청크 요약[{idx}]: id={chunk.id} file={chunk.file_path} content_len={len(chunk.content)} embedding={chunk.embedding}")
-                return
-            
+                return False
             with self._lock:
-                if HAS_FAISS and self.index:
-                    embeddings_array = np.array(embeddings, dtype=np.float32)
+                if not HAS_FAISS:
+                    logger.error("add_chunks: FAISS 미설치 상태 (return False)")
+                    return False
+                if self.index is None:
+                    logger.error("add_chunks: self.index가 None (return False)")
+                    return False
+                embeddings_array = np.array(embeddings, dtype=np.float32)
+                try:
                     self.index.add(embeddings_array)
-                for chunk in valid_chunks:
-                    self.chunk_map[chunk.id] = chunk
-                    if chunk.file_path not in self.file_index:
-                        self.file_index[chunk.file_path] = []
-                    if chunk.id not in self.file_index[chunk.file_path]:
-                        self.file_index[chunk.file_path].append(chunk.id)
-                if len(self.chunk_map) % 100 == 0:
-                    self._save_index()
+                except AssertionError as ae:
+                    logger.error(f"add_chunks: FAISS AssertionError(차원 불일치 등): {ae}. 인덱스 파일/메타데이터 자동 삭제 및 재초기화 시도")
+                    import os
+                    index_file = f"{self.index_path}/vector.index"
+                    metadata_file = f"{self.index_path}/metadata.json"
+                    if os.path.exists(index_file):
+                        os.remove(index_file)
+                    if os.path.exists(metadata_file):
+                        os.remove(metadata_file)
+                    self._initialize_index()
+                    if not retry:
+                        logger.warning("add_chunks: 인덱스 재초기화 후 1회 재시도")
+                        return await self.add_chunks(chunks, retry=True)
+                    else:
+                        logger.error("add_chunks: 인덱스 재초기화 후에도 실패. 무한루프 방지. (return False)")
+                        return False
+            for chunk in valid_chunks:
+                self.chunk_map[chunk.id] = chunk
+                if chunk.file_path not in self.file_index:
+                    self.file_index[chunk.file_path] = []
+                if chunk.id not in self.file_index[chunk.file_path]:
+                    self.file_index[chunk.file_path].append(chunk.id)
+            if len(self.chunk_map) % 100 == 0:
+                self._save_index()
             logger.info(f"벡터 DB에 {len(valid_chunks)} 청크 추가됨")
+            return True
         except Exception as e:
-            logger.error(f"청크 추가 실패: {e}")
+            logger.error(f"청크 추가 실패: {e}\n{traceback.format_exc()}")
+            return False
     
     async def search(self, query: str, k: int = 10) -> List[SearchResult]:
         logger.debug(f"[VectorDB] search 진입: query='{query}', k={k}")
@@ -294,6 +314,12 @@ class VectorDatabase:
             
         except Exception as e:
             logger.error(f"인덱스 재구축 실패: {e}")
+
+    def search_file_by_name(self, filename: str) -> list:
+        """파일명으로 전체 경로 후보를 반환"""
+        # vector DB: file_index의 key(전체 경로)에서 파일명 일치/포함 검색
+        matches = [path for path in self.file_index.keys() if os.path.basename(path) == filename or filename in os.path.basename(path)]
+        return matches
 
 class GraphDatabase:
     """Neo4j/NetworkX 기반 그래프 데이터베이스"""
@@ -568,6 +594,12 @@ class GraphDatabase:
         except Exception as e:
             logger.error(f"CALLS 엣지 추가 실패: {e}")
 
+    def search_file_by_name(self, filename: str) -> list:
+        """그래프 DB에서 파일명으로 전체 경로 후보 반환"""
+        if hasattr(self, 'graph') and self.graph:
+            return [n for n in self.graph.nodes if os.path.basename(n) == filename or filename in os.path.basename(n)]
+        return []
+
 class CodeIndexer:
     """코드 인덱싱 시스템"""
     
@@ -631,73 +663,68 @@ class CodeIndexer:
             return ""
     
     def _should_reindex_file(self, file_path: str) -> bool:
-        """파일 재인덱싱 필요 여부 확인"""
+        """파일 재인덱싱 필요 여부 확인 (벡터 DB에도 청크가 실제로 존재하는지까지 확인)"""
         try:
+            # 1. 벡터 DB에 해당 파일의 청크가 하나도 없으면 반드시 재인덱싱
+            if file_path not in self.vector_db.file_index or not self.vector_db.file_index[file_path]:
+                logger.warning(f"[REINDEX] 벡터 DB에 청크 없음: {file_path}")
+                return True
+            # 2. 메타데이터 DB 체크는 그 다음
             current_hash = self._get_file_hash(file_path)
-            
             conn = sqlite3.connect(self.metadata_db_path)
             cursor = conn.cursor()
-            
             cursor.execute("SELECT file_hash FROM indexed_files WHERE file_path = ?", (file_path,))
             result = cursor.fetchone()
-            
             conn.close()
-            
             if result is None:
                 return True  # 새 파일
-            
             return result[0] != current_hash  # 해시가 다르면 재인덱싱
-            
         except Exception as e:
             logger.error(f"파일 해시 비교 실패: {e}")
             return True
     
     async def index_file(self, file_path: str) -> bool:
-        """단일 파일 인덱싱"""
+        logger.info(f"[DEBUG] index_file 진입: {file_path} | vector_db.file_index keys={list(self.vector_db.file_index.keys())[:3]} 전체길이={len(self.vector_db.file_index)}")
         try:
             if not os.path.exists(file_path):
                 logger.warning(f"파일이 존재하지 않습니다: {file_path}")
                 return False
-            
             # 재인덱싱 필요 여부 확인
             if not self._should_reindex_file(file_path):
                 logger.debug(f"파일이 이미 최신 상태입니다: {file_path}")
                 return True
-            
-            logger.info(f"파일 인덱싱 시작: {file_path}")
-            
+            logger.info(f"[INDEX] 파일 인덱싱 시작: {file_path}")
             # 기존 데이터 제거
             self.vector_db.remove_file(file_path)
-            
             # 코드 분석
+            logger.error(f"[DEBUG] analyze_file 호출 직전: {file_path}")
             analysis_result = await self.code_analyzer.analyze_file(file_path)
+            logger.error(f"[DEBUG] analyze_file 호출 후: {file_path} 결과 keys={list(analysis_result.keys()) if analysis_result else 'None'}")
             if not analysis_result:
-                logger.warning(f"코드 분석 실패: {file_path}")
+                logger.warning(f"[INDEX] 코드 분석 실패: {file_path}")
                 return False
-            
+            logger.info(f"[INDEX] 코드 분석 결과: {file_path} - 함수 {len(analysis_result.get('functions', []))}개, 클래스 {len(analysis_result.get('classes', []))}개")
             # 파일을 청크로 분할
             chunks = await self._chunk_file(file_path, analysis_result)
-            
+            logger.info(f"[INDEX] 청크 생성 결과: {file_path} - 청크 {len(chunks)}개")
+            if not chunks:
+                logger.warning(f"[INDEX] 청크가 하나도 생성되지 않음: {file_path}")
             # 벡터 DB에 추가
             if chunks:
+                logger.error(f"[DEBUG] add_chunks 호출 직전: {file_path} chunks={len(chunks)}")
                 await self.vector_db.add_chunks(chunks)
-            
+                logger.error(f"[DEBUG] add_chunks 호출 후: {file_path}")
             # 그래프 DB에 추가
             await self._add_to_graph(file_path, analysis_result)
-            
             # 메타데이터 업데이트
             self._update_file_metadata(file_path, len(chunks), analysis_result['language'])
-            
-            logger.success(f"파일 인덱싱 완료: {file_path} ({len(chunks)} 청크)")
+            logger.success(f"[INDEX] 파일 인덱싱 완료: {file_path} ({len(chunks)} 청크)")
             return True
-            
         except Exception as e:
-            import traceback
-            logger.error(f"파일 인덱싱 실패 {file_path}: {e}\n{traceback.format_exc()}")
+            logger.error(f"[INDEX] 파일 인덱싱 실패 {file_path}: {e}\n{traceback.format_exc()}")
             return False
     
     async def _chunk_file(self, file_path: str, analysis: Dict[str, Any]) -> List[CodeChunk]:
-        """파일을 청크로 분할"""
         chunks = []
         logger.debug(f"[CHUNK_FILE] 진입: file_path={file_path}, 분석 keys={list(analysis.keys())}")
         try:
@@ -832,8 +859,7 @@ class CodeIndexer:
             
             logger.debug(f"[CHUNK_FILE] 최종 생성된 청크 개수: {len(chunks)} (file_path={file_path})")
         except Exception as e:
-            logger.error(f"파일 청킹 실패 {file_path}: {e}")
-        
+            logger.error(f"[CHUNK_FILE] 파일 청킹 실패 {file_path}: {e}")
         return chunks
     
     async def _add_to_graph(self, file_path: str, analysis: Dict[str, Any]):
@@ -931,6 +957,7 @@ class CodeIndexer:
     async def index_directory(self, directory_path: str = None, max_files: int = None) -> Dict[str, Any]:
         # 모든 입력 경로를 무조건 /workspace로 고정
         directory_path = "/workspace"
+        logger.error(f"[DEBUG] index_directory 진입: vector_db.file_index keys={list(self.vector_db.file_index.keys())[:3]} 전체길이={len(self.vector_db.file_index)}, chunk_map keys={list(self.vector_db.chunk_map.keys())[:3]} 전체길이={len(self.vector_db.chunk_map)}")
         try:
             self.indexing_in_progress = True
             self.indexing_progress = 0
@@ -946,22 +973,83 @@ class CodeIndexer:
                 pattern = f"**/*{ext}"
                 found_files = list(directory_path.glob(pattern))
                 files.extend(found_files)
+            # --- .gitignore 및 숨김 디렉토리(.으로 시작) 예외 처리 ---
             exclude_dirs = {'.git', '__pycache__', 'node_modules', '.venv', 'venv', 'dist', 'build'}
-            files = [f for f in files if not any(part in exclude_dirs for part in f.parts)]
+            # .gitignore에서 제외할 경로 읽기
+            gitignore_path = directory_path / '.gitignore'
+            gitignore_patterns = set()
+            if gitignore_path.exists():
+                with open(gitignore_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            # 디렉토리 패턴만 추출
+                            if line.endswith('/'):
+                                gitignore_patterns.add(line.rstrip('/'))
+                            else:
+                                gitignore_patterns.add(line)
+            def is_excluded(f):
+                # .으로 시작하는 디렉토리 예외 (루트/중간 모두)
+                if any(part.startswith('.') and part not in {'.', '..'} for part in f.parts):
+                    return True
+                # 빌드/캐시 디렉토리 예외
+                if any(part in exclude_dirs for part in f.parts):
+                    return True
+                # .gitignore 패턴 예외 (prefix 매칭)
+                for pattern in gitignore_patterns:
+                    # 디렉토리 패턴이면 prefix 매칭
+                    if (str(f).startswith(str(directory_path / pattern)) or
+                        (pattern in str(f))):
+                        return True
+                return False
+            files = [f for f in files if not is_excluded(f)]
             if max_files:
                 files = files[:max_files]
             self.indexing_total = len(files)
+            logger.info(f"[DEBUG] 인덱싱 대상 파일 수: {len(files)} (예시: {[str(f) for f in files[:5]]})")
             logger.info(f"디렉토리 인덱싱 시작: {directory_path} ({len(files)} 파일)")
+
+            # --- rename 감지 및 처리 ---
+            import sqlite3
+            conn = sqlite3.connect(self.metadata_db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path, file_hash FROM indexed_files")
+            old_hash_map = {row[1]: row[0] for row in cursor.fetchall()}
+            conn.close()
+            for file_path in files:
+                file_hash = self._get_file_hash(str(file_path))
+                if file_hash in old_hash_map and str(file_path) != old_hash_map[file_hash]:
+                    old_path = old_hash_map[file_hash]
+                    logger.info(f"[RENAME 감지] {old_path} → {file_path}")
+                    # 벡터 DB/그래프 DB/메타데이터에서 기존 경로 삭제
+                    self.vector_db.remove_file(old_path)
+                    self.graph_db.add_file_node(old_path, {"deleted": True})
+                    # 메타데이터 DB에서 기존 경로 삭제
+                    conn = sqlite3.connect(self.metadata_db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("DELETE FROM indexed_files WHERE file_path = ?", (old_path,))
+                    conn.commit()
+                    conn.close()
+            # --- 기존 인덱싱 루프 ... (아래 기존 코드 유지) ---
+
             success_count = 0
             error_count = 0
+            failed_files = []
             tasks = []
             semaphore = asyncio.Semaphore(8)
             async def index_with_semaphore(file_path):
                 async with semaphore:
-                    return await self.index_file(str(file_path))
-            for file_path in files:
+                    try:
+                        return await self.index_file(str(file_path))
+                    except Exception as e:
+                        failed_files.append(file_path)
+                        with open('logs/failed_indexing.log', 'a') as f:
+                            f.write(f"{file_path}: {str(e)}\n")
+                            return False
+            for idx, file_path in enumerate(files):
                 task = asyncio.create_task(index_with_semaphore(file_path))
                 tasks.append(task)
+                logger.info(f"[인덱싱 진행률] {idx+1}/{len(files)} ({(idx+1)/len(files)*100:.1f}%) - {file_path}")
             results = []
             for i, task in enumerate(asyncio.as_completed(tasks)):
                 result = await task
@@ -984,14 +1072,14 @@ class CodeIndexer:
                 'success_count': success_count,
                 'error_count': error_count,
                 'directory': str(directory_path),
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'failed_files': failed_files,
             }
             logger.success(f"디렉토리 인덱싱 완료: {success_count}/{len(files)} 성공")
             return result
         except Exception as e:
             self.indexing_in_progress = False
             self.indexing_error = str(e)
-            import traceback
             logger.error(f"디렉토리 인덱싱 실패: {e}\n{traceback.format_exc()}")
             return {'error': str(e)}
     
@@ -1073,36 +1161,49 @@ class RAGSystem:
         self.llm_manager = get_llm_manager()
     
     async def search_codebase(
-        self, 
-        query: str, 
+        self,
+        query: str,
         project_path: Optional[str] = None,
         k: int = 10,
         include_graph: bool = True
-    ) -> List[SearchResult]:
+    ) -> list:
         logger.info(f"[RAGSystem] search_codebase 진입: query='{query[:50]}...', k={k}, include_graph={include_graph}")
         try:
             logger.info(f"코드베이스 검색: {query[:50]}...")
-            
+            # 벡터 DB가 비어 있으면 자동 재인덱싱 시도
+            if not self.vector_db.chunk_map or len(self.vector_db.chunk_map) == 0:
+                logger.warning("[RAGSystem] 벡터 DB가 비어 있음. 자동 재인덱싱 시도...")
+                await self.indexer.index_directory("/workspace")
+            # 파일명 쿼리일 경우 우선적으로 파일명 기반 검색
+            if query.strip().endswith('.js') or query.strip().endswith('.py') or query.strip().endswith('.ts'):
+                matches = self.vector_db.search_file_by_name(query.strip())
+                if matches:
+                    # SearchResult 객체로 변환
+                    results = []
+                    for path in matches:
+                        # file_index에서 첫 번째 청크를 가져옴
+                        chunk_ids = self.vector_db.file_index.get(path, [])
+                        if chunk_ids:
+                            chunk = self.vector_db.chunk_map[chunk_ids[0]]
+                            sr = SearchResult(chunk=chunk, similarity_score=1.0)
+                            results.append(sr)
+                    logger.info(f"[RAGSystem] 파일명 기반 검색 결과: {len(results)}개")
+                    return results[:k]
             # 벡터 검색
             vector_results = await self.vector_db.search(query, k)
-            
             # 그래프 정보 추가
             if include_graph:
                 for result in vector_results:
                     file_path = result.chunk.file_path
                     related_files = self.graph_db.find_related_files(file_path)
                     result.graph_connections = related_files
-                    
                     # 관련성 점수 조정
                     graph_boost = len(related_files) * 0.1
                     result.relevance_score = result.similarity_score + graph_boost
-            
             # 결과 정렬
             vector_results.sort(key=lambda x: x.relevance_score or x.similarity_score, reverse=True)
-            
             logger.info(f"[RAGSystem] search_codebase 결과: {len(vector_results)}개")
             return vector_results
-            
         except Exception as e:
             logger.error(f"코드베이스 검색 실패: {e}")
             return []
