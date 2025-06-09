@@ -14,6 +14,29 @@ Open CodeAI는 대형 프로젝트/폐쇄망 환경을 위한 오픈소스 AI �
 
 ## 🖥️ OS별 설치/실행 가이드
 
+### 설치 옵션
+
+Open CodeAI는 온라인과 오프라인 환경 모두에서 설치할 수 있습니다.
+
+#### 온라인 설치 (기본)
+온라인 환경에서는 다음 명령어로 설치할 수 있습니다:
+```bash
+./scripts/install.sh
+```
+
+#### 오프라인 설치
+오프라인 환경에서 설치하기 위해서는 먼저 필요한 패키지들을 다운로드해야 합니다:
+
+1. 온라인 환경에서 패키지 다운로드:
+```bash
+./scripts/download_offline_packages.sh
+```
+
+2. 다운로드된 패키지와 함께 설치:
+```bash
+./scripts/install.sh --offline
+```
+
 ### macOS
 
 1. **필수 도구 설치**
@@ -85,6 +108,28 @@ Open CodeAI는 대형 프로젝트/폐쇄망 환경을 위한 오픈소스 AI �
 - Docker Desktop/엔진이 반드시 실행 중이어야 함
 - 환경변수/경로 문제 발생 시, OS별 안내 메시지 참고
 - 경로에 한글/공백/특수문자 사용 금지 권장
+
+### 설치 문제 해결
+
+1. **환경 변수 설정**
+   - 프로젝트 루트에 `.env` 파일이 필요합니다:
+   ```env
+   PROJECT_PATH=/path/to/your/workspace
+   PROJECT_BASENAME=open-codeai
+   ```
+   - 또는 직접 환경 변수 설정:
+   ```bash
+   export PROJECT_PATH=/path/to/your/workspace
+   export PROJECT_BASENAME=open-codeai
+   ```
+
+2. **권한 문제**
+   - 스크립트 실행 권한 확인: `chmod +x *.sh`
+   - Docker 그룹 권한 확인: `sudo usermod -aG docker $USER`
+
+3. **Docker Desktop 상태**
+   - Docker Desktop이 실행 중인지 확인
+   - Docker 데몬 상태 확인: `docker info`
 
 ---
 

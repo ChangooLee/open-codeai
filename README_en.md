@@ -14,6 +14,29 @@ This project is licensed under the [MIT License](LICENSE).
 
 # Quick Start Guide by OS
 
+## Installation Options
+
+Open CodeAI can be installed in both online and offline environments.
+
+### Online Installation (Default)
+For online environments, use the following command:
+```bash
+./scripts/install.sh
+```
+
+### Offline Installation
+For offline environments, you need to download the required packages first:
+
+1. Download packages in an online environment:
+```bash
+./scripts/download_offline_packages.sh
+```
+
+2. Install with downloaded packages:
+```bash
+./scripts/install.sh --offline
+```
+
 ## macOS
 
 1. **Install Required Tools**
@@ -398,3 +421,25 @@ Open CodeAI runs in a Docker container, and you can specify the project root dir
 
 - `start.sh`: Automatically sets up project-specific data directories, vector/graph DB paths, supports various commands (`start`, `stop`, `status`, `logs`), and includes log/status checking.
 - `install.sh`: Fully automates offline package installation, Docker image build, Neo4j/Redis container setup, .env auto-generation, data directory creation, and GPU/CPU environment detection. 
+
+### Troubleshooting Installation
+
+1. **Environment Variables**
+   - Create `.env` file in project root:
+   ```env
+   PROJECT_PATH=/path/to/your/workspace
+   PROJECT_BASENAME=open-codeai
+   ```
+   - Or set environment variables directly:
+   ```bash
+   export PROJECT_PATH=/path/to/your/workspace
+   export PROJECT_BASENAME=open-codeai
+   ```
+
+2. **Permission Issues**
+   - Check script execution permissions: `chmod +x *.sh`
+   - Verify Docker group permissions: `sudo usermod -aG docker $USER`
+
+3. **Docker Desktop Status**
+   - Ensure Docker Desktop is running
+   - Check Docker daemon status: `docker info` 
