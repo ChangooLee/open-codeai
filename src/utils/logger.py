@@ -71,15 +71,6 @@ def setup_logger(
             diagnose=True
         )
         
-        # 성능 로그 파일
-        logger.add(
-            log_path / "performance.log",
-            format="{time:YYYY-MM-DD HH:mm:ss} | {message}",
-            filter=lambda record: "PERF" in record["message"],
-            rotation="10 MB",
-            retention="7 days"
-        )
-
 
 def get_logger(name: str) -> Any:
     """

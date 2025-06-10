@@ -33,18 +33,22 @@ log_error() {
 
 install_python_packages() {
     log_header "=== Python 패키지 설치 ==="
-    if [[ "$GPU_AVAILABLE" == "true" ]]; then
-        log_info "GPU 환경 감지: torch, torchvision만 설치 (vllm, faiss-gpu, torchaudio 제외)"
-        pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-    else
-        log_warning "GPU를 감지할 수 없습니다. CPU 버전으로 설치합니다"
-        GPU_AVAILABLE=false
-        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-    fi
-    # 메인 패키지들 설치
-    log_info "메인 패키지 설치 중..."
-    pip install --no-index --find-links=offline_packages -r requirements.txt
+    # torch, torchvision 등도 offline_packages에 반드시 포함되어야 함
+    log_info "메인 패키지 및 torch/torchvision 등 설치 중..."
+    pip install --no-index --find-links=offline_packages torch torchvision torchaudio || log_warning "torch/torchvision/torchaudio 설치 실패! offline_packages를 확인하세요."
+    pip install --no-index --find-links=offline_packages -r requirements.txt || log_error "requirements.txt 패키지 설치 실패! offline_packages를 확인하세요."
+    
+    # tree-sitter-xxx 계열 whl 강제 설치 (버전/플랫폼 무시)
+    for whl in offline_packages/tree_sitter_*.whl; do
+        if [ -f "$whl" ]; then
+            echo "[INFO] 강제 설치: $whl"
+            pip install --no-deps --force-reinstall --no-index "$whl" || echo "[WARNING] $whl 설치 실패 (무시)"
+        fi
+    done
     log_info "메인 패키지 설치 완료"
+    # 설치 후 import 테스트 (tree-sitter, tree-sitter-languages)
+    python -c "import tree_sitter" || log_warning "tree-sitter import 실패! requirements.txt와 offline_packages를 확인하세요."
+    python -c "import tree_sitter_languages" || log_warning "tree-sitter-languages import 실패! wheel이 올바른지, offline_packages에 복사되었는지 확인하세요."
 }
 
 # Docker 컨테이너 설정
@@ -183,12 +187,12 @@ load_offline_docker_images() {
 
 # 메인 설치 함수
 main_install() {
-    log_header "=== Docker 이미지 빌드 (캐시 무시) ==="
-    docker-compose -f docker-compose.yml build --no-cache
+    log_header "=== 오프라인 패키지 및 환경 준비 ==="
     install_offline_packages || install_python_packages
     load_offline_docker_images
     create_env_file
-    setup_docker_containers
+    create_data_directories
+    log_success "설치가 완료되었습니다. 서비스 실행은 start.sh를 사용하세요."
 }
 
 # 메인 실행 함수
@@ -198,10 +202,6 @@ main() {
     log_header "⚠️  경로에 한글/공백/특수문자 사용을 피하세요!"
     log_header "======================================"
     echo ""
-    if ! docker info &> /dev/null; then
-        log_error "Docker Desktop/엔진이 실행 중이 아닙니다. Docker를 실행한 후 다시 시도하세요."
-        exit 1
-    fi
     main_install
     if python scripts/verify_installation.py; then
         log_success "설치가 성공적으로 완료되었습니다!"

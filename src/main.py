@@ -118,7 +118,7 @@ async def start_file_watcher() -> None:
                     return
                 # Use workspace root as default project path
                 project_root = getattr(settings, 'PROJECT_ROOT', os.getcwd())
-                supported_extensions = ['.py', '.js', '.ts', '.java', '.cpp', '.c', '.go', '.rs']
+                supported_extensions = ['.py', '.js', '.ts', '.mjs', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rs', '.php', '.rb', '.css', '.json', '.yml', '.yaml', '.md', '.txt', '.html', '.sh']
                 if hasattr(settings, 'SUPPORTED_EXTENSIONS') and settings.SUPPORTED_EXTENSIONS:
                     supported_extensions = [ext.strip() for ext in settings.SUPPORTED_EXTENSIONS.split(',') if ext.strip()]
                 if any(event.src_path.endswith(ext) for ext in supported_extensions):
@@ -533,7 +533,7 @@ async def get_detailed_status() -> Dict[str, Any]:
             ]
         # Use workspace root as default project path
         project_root = getattr(settings, 'PROJECT_ROOT', os.getcwd())
-        supported_extensions = ['.py', '.js', '.ts', '.java', '.cpp', '.c', '.go', '.rs']
+        supported_extensions = ['.py', '.js', '.ts', '.mjs', '.jsx', '.tsx', '.java', '.cpp', '.c', '.go', '.rs', '.php', '.rb', '.css', '.json', '.yml', '.yaml', '.md', '.txt', '.html', '.sh']
         if hasattr(settings, 'SUPPORTED_EXTENSIONS') and settings.SUPPORTED_EXTENSIONS:
             supported_extensions = [ext.strip() for ext in settings.SUPPORTED_EXTENSIONS.split(',') if ext.strip()]
         return {

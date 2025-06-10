@@ -459,33 +459,24 @@ async def search_codebase(
 
 @router.post("/index/project")
 async def index_project(
-    request: IndexProjectRequest,
     rag_system = Depends(get_rag_system)
 ) -> Dict[str, Any]:
-    """프로젝트 인덱싱 API"""
-    
+    """프로젝트 인덱싱 API - 무조건 /workspace만 인덱싱, 파라미터 없음"""
     if getattr(rag_system.indexer, 'indexing_in_progress', False):
         return JSONResponse(status_code=429, content={
             "status": "indexing_in_progress",
             "message": "인덱싱 중입니다. 인덱싱이 끝난 후 다시 시도해 주세요."
         })
-    
     try:
-        logger.info(f"프로젝트 인덱싱 요청: {request.project_path}")
-        
-        result = await rag_system.indexer.index_directory(
-            directory_path=request.project_path,
-            max_files=request.max_files
-        )
-        
+        logger.info(f"프로젝트 인덱싱 요청: /workspace (파라미터 없이 고정)")
+        result = await rag_system.indexer.index_directory(directory_path="/workspace")
         return {
             "status": "success",
             "message": f"프로젝트 인덱싱 완료",
-            "project_path": request.project_path,
+            "project_path": "/workspace",
             "indexing_result": result,
             "timestamp": datetime.now().isoformat()
         }
-        
     except Exception as e:
         logger.error(f"프로젝트 인덱싱 실패: {e}")
         raise HTTPException(status_code=500, detail=f"프로젝트 인덱싱 실패: {str(e)}")

@@ -18,8 +18,7 @@ class ProjectConfig(BaseModel):
     version: str = "1.0.0"
     max_files: int = 10000
     supported_extensions: List[str] = [
-        ".py", ".js", ".ts", ".java", ".cpp", ".c", 
-        ".go", ".rs", ".php", ".rb", ".scala", ".kt"
+        ".py", ".js", ".ts", ".mjs", ".jsx", ".tsx", ".java", ".kt", ".kts", ".scala", ".groovy", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".go", ".rs", ".php", ".rb", ".swift", ".dart", ".css", ".scss", ".sass", ".less", ".vue", ".svelte", ".astro", ".html", ".htm", ".xml", ".json", ".yml", ".yaml", ".toml", ".ini", ".md", ".rst", ".txt", ".csv", ".tsv", ".sh", ".bat", ".ps1", ".dockerfile", ".env", ".conf", ".cfg", ".properties", ".makefile", ".gradle", ".gitignore", ".npmrc", ".eslintrc", ".prettierrc", ".babelrc", ".editorconfig"
     ]
 
 
