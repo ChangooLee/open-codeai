@@ -1,57 +1,132 @@
 #!/bin/bash
-set -u  # -e 제거, -u(정의 안된 변수 사용시 에러)
 
-failed_downloads=()
+# 오프라인 패키지 다운로드 스크립트
+# 이 스크립트는 필요한 모든 Python 패키지, 모델, Docker 이미지를 다운로드합니다.
 
-# scripts 디렉토리 내 모든 .sh 파일 실행 권한 부여
-chmod +x scripts/*.sh 2>/dev/null || true
+# 오류 발생 시 즉시 중단
+set -e
 
-# tree-sitter-languages wheel 빌드/복사 기능 제거, PyPI wheel 다운로드 안내만 출력
+# 작업 디렉토리 설정
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_DIR="$(dirname "$SCRIPT_DIR")"
+OFFLINE_DIR="$WORKSPACE_DIR/offline_packages"
+DOCKER_IMAGES_DIR="$OFFLINE_DIR/docker-images"
+TREE_SITTER_DIR="$OFFLINE_DIR/tree-sitter-languages"
 
-echo "[INFO] tree-sitter-languages는 PyPI에 wheel이 제공됩니다. 오프라인 설치 시 아래 명령으로 최신 버전(1.10.2) wheel을 offline_packages에 다운로드하세요:"
-echo "      pip download tree-sitter-languages==1.10.2 --only-binary=:all: -d offline_packages/"
-echo "[TIP] requirements.txt에 tree-sitter-languages==1.10.2를 명시하세요."
+# 디렉토리 생성
+mkdir -p "$OFFLINE_DIR"
+mkdir -p "$DOCKER_IMAGES_DIR"
+mkdir -p "$TREE_SITTER_DIR"
 
-# Docker 환경에서 오프라인 패키지 다운로드 (Python 3.12 기준, 빌드 도구 포함)
-echo "[INFO] Docker 컨테이너에서 오프라인 패키지 다운로드를 시작합니다. (Linux x86_64, Python 3.12, 빌드 도구 포함)"
-docker run --rm -v "$PWD":/app -w /app python:3.12-slim bash -c '
-  apt-get update && \
-  apt-get install -y --no-install-recommends make gcc g++ python3-dev && \
-  pip install --upgrade pip && \
-  pip download -r requirements.txt -d offline_packages && \
-  pip download torch torchvision torchaudio -d offline_packages
-'
-if [ $? -eq 0 ]; then
-    echo "[INFO] Docker 환경에서 오프라인 패키지 다운로드 완료"
-else
-    echo "[ERROR] Docker 환경에서 pip download 실패! requirements.txt 또는 네트워크 상태를 확인하세요."
-    failed_downloads+=("docker_pip_download")
+echo "[INFO] 오프라인 패키지 다운로드를 시작합니다..."
+
+# Python 패키지 다운로드
+echo "[INFO] Python 패키지 다운로드 중..."
+pip download -r "$WORKSPACE_DIR/requirements.txt" -d "$OFFLINE_DIR"
+
+# Tree-sitter 언어 파일 다운로드 및 빌드
+echo "[INFO] Tree-sitter CLI 설치 및 언어 파일 빌드 중..."
+
+# Tree-sitter CLI 설치
+if ! command -v tree-sitter &> /dev/null; then
+    echo "[INFO] Tree-sitter CLI 설치 중..."
+    npm install -g tree-sitter-cli
 fi
 
-# codebert-base 모델 다운로드 (HuggingFace Hub, 공개 모델)
-if ! [ -d offline_packages/codebert-base ]; then
-  echo "[INFO] microsoft/codebert-base 모델 다운로드 (공개 모델, 인증 불필요)"
-  python3 -m pip install huggingface_hub --quiet
-  python3 -c "from huggingface_hub import snapshot_download; snapshot_download('microsoft/codebert-base', local_dir='offline_packages/codebert-base', local_dir_use_symlinks=False)"
-  if [ $? -eq 0 ]; then
-      echo "[INFO] codebert-base 모델 다운로드 완료"
-  else
-      echo "[ERROR] codebert-base 모델 다운로드 실패! 네트워크 상태 또는 huggingface_hub 설치를 확인하세요."
-      failed_downloads+=("codebert-base")
-  fi
-fi
+# 지원하는 언어 목록
+LANGUAGES=(
+    "python:https://github.com/tree-sitter/tree-sitter-python"
+    "java:https://github.com/tree-sitter/tree-sitter-java"
+    "javascript:https://github.com/tree-sitter/tree-sitter-javascript"
+    "typescript:https://github.com/tree-sitter/tree-sitter-typescript"
+    "cpp:https://github.com/tree-sitter/tree-sitter-cpp"
+    "c:https://github.com/tree-sitter/tree-sitter-c"
+)
 
-# lxml 등 XML 파서도 requirements.txt에 포함되어야 함 (MyBatis 매퍼 분석 지원)
+# 각 언어 파일 빌드
+for lang_info in "${LANGUAGES[@]}"; do
+    IFS=':' read -r lang_name repo_url <<< "${lang_info}"
+    echo "[INFO] ${lang_name} 언어 파일 빌드 중..."
+    TEMP_DIR=$(mktemp -d)
+    cd "${TEMP_DIR}"
+    
+    # 특수 처리: typescript
+    if [ "${lang_name}" = "typescript" ]; then
+        git clone "${repo_url}" .
+        for sub in typescript tsx; do
+            if [ -d "$sub" ]; then
+                cd "$sub"
+                tree-sitter generate
+                if [ -f "src/parser.c" ]; then
+                    if [ -f "src/scanner.c" ]; then
+                        gcc -shared -o "${sub}.so" -fPIC src/parser.c src/scanner.c
+                    elif [ -f "src/scanner.cc" ]; then
+                        g++ -shared -o "${sub}.so" -fPIC src/parser.c src/scanner.cc
+                    else
+                        gcc -shared -o "${sub}.so" -fPIC src/parser.c
+                    fi
+                    cp "${sub}.so" "${TREE_SITTER_DIR}/"
+                fi
+                cd ..
+            fi
+        done
+        cd - > /dev/null
+        rm -rf "${TEMP_DIR}"
+        continue
+    fi
 
-# tree-sitter-<lang> 패키지는 requirements.txt에서 제거됨. tree-sitter-languages wheel만 offline_packages에 복사하세요.
-# 오프라인 환경에서는 아래 명령으로 설치:
-#   pip install --no-index --find-links=offline_packages tree_sitter_languages-*.whl
+    # 특수 처리: cpp (tree-sitter-c도 필요)
+    if [ "${lang_name}" = "cpp" ]; then
+        git clone "${repo_url}" .
+        git clone https://github.com/tree-sitter/tree-sitter-c tree-sitter-c
+        tree-sitter generate
+        if [ -f "src/parser.c" ]; then
+            if [ -f "src/scanner.c" ]; then
+                gcc -shared -o "${lang_name}.so" -fPIC src/parser.c src/scanner.c
+            elif [ -f "src/scanner.cc" ]; then
+                g++ -shared -o "${lang_name}.so" -fPIC src/parser.c src/scanner.cc
+            else
+                gcc -shared -o "${lang_name}.so" -fPIC src/parser.c
+            fi
+            cp "${lang_name}.so" "${TREE_SITTER_DIR}/"
+        fi
+        cd - > /dev/null
+        rm -rf "${TEMP_DIR}"
+        continue
+    fi
 
-# requirements.txt에 tree-sitter, tree-sitter-languages, lxml, toml, ruamel.yaml, python-frontmatter, markdown, configparser 등 다양한 파서/분석 패키지가 반드시 포함되어야 함
+    # 일반 언어 처리
+    git clone "${repo_url}" .
+    tree-sitter generate
+    if [ -f "src/parser.c" ]; then
+        if [ -f "src/scanner.c" ]; then
+            gcc -shared -o "${lang_name}.so" -fPIC src/parser.c src/scanner.c
+        elif [ -f "src/scanner.cc" ]; then
+            g++ -shared -o "${lang_name}.so" -fPIC src/parser.c src/scanner.cc
+        else
+            gcc -shared -o "${lang_name}.so" -fPIC src/parser.c
+        fi
+        cp "${lang_name}.so" "${TREE_SITTER_DIR}/"
+    fi
+    cd - > /dev/null
+    rm -rf "${TEMP_DIR}"
+done
 
-echo ""
+# Docker 이미지 다운로드
+echo "[INFO] Docker 이미지 다운로드 중..."
+docker pull python:3.11-slim
+docker pull neo4j:5.15.0
+docker pull redis:7.2.4
+
+# Docker 이미지 저장
+docker save python:3.11-slim | gzip > "${DOCKER_IMAGES_DIR}/python.tar.gz"
+docker save neo4j:5.15.0 | gzip > "${DOCKER_IMAGES_DIR}/neo4j.tar.gz"
+docker save redis:7.2.4 | gzip > "${DOCKER_IMAGES_DIR}/redis.tar.gz"
+
+echo "[INFO] Docker 환경에서 오프라인 패키지 다운로드 완료"
+
 echo "[INFO] 오프라인 설치 준비가 완료되었습니다."
-echo ""
+
 echo "===== 오프라인 설치 가이드 ====="
 echo "1. offline_packages/와 offline_packages/docker-images/ 폴더를 오프라인 서버로 복사하세요."
 echo "2. 오프라인 서버에서 아래 명령을 순서대로 실행하세요:"
@@ -61,25 +136,19 @@ echo "   python3 -m venv venv"
 echo "   source venv/bin/activate"
 echo ""
 echo "   # 오프라인 Docker 이미지 로드"
-echo "   for tar in offline_packages/docker-images/*.tar; do docker load -i \"$tar\"; done"
+echo "   for image in offline_packages/docker-images/*.tar.gz; do"
+echo "     docker load < \"\$image\""
+echo "   done"
 echo ""
-echo "   # 오프라인 패키지 설치 및 서비스 시작"
-echo "   bash scripts/install.sh"
+echo "   # 오프라인 패키지 설치"
+echo "   pip install --no-index --find-links=offline_packages -r requirements.txt"
 echo ""
-echo "3. 설치가 완료되면 scripts/start.sh로 서비스를 시작하세요."
-echo "==============================="
-echo "[INFO] microsoft/codebert-base 모델이 offline_packages/codebert-base 폴더에 준비되어야 합니다."
-
+echo "   # Tree-sitter 언어 파일 설치"
+echo "   mkdir -p build"
+echo "   cp offline_packages/tree-sitter-languages/*.so build/"
 echo ""
-if [ ${#failed_downloads[@]} -ne 0 ]; then
-    echo "==== 다운로드 실패 목록 ===="
-    for pkg in "${failed_downloads[@]}"; do
-        echo "  - $pkg"
-    done
-    exit 1
-else
-    echo "✅ 모든 패키지/이미지/모델 다운로드 성공"
-fi
+echo "3. Docker Compose로 서비스 시작"
+echo "   docker-compose up -d"
 
 # =====================
 # [NEW] 모든 requirements.txt 패키지에 대해 주요 플랫폼/파이썬 버전별 whl 다운로드

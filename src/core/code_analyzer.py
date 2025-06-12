@@ -19,6 +19,9 @@ from src.utils.mapper_xml_parser import parse_mapper_xml
 from src.utils.logger import get_logger
 from .tree_sitter_analyzer import TreeSitterAnalyzer, Language
 import subprocess
+from tree_sitter_languages import get_parser
+from tree_sitter import Parser
+from tree_sitter_languages import get_language
 
 logger = get_logger(__name__)
 
@@ -137,36 +140,11 @@ class CodeAnalyzer:
         }
         
     def _initialize_tree_sitter(self) -> None:
-        """Tree-sitter 초기화"""
-        try:
-            from tree_sitter_languages import get_parser
-            
-            # 언어 정의
-            languages = {
-                'python': 'python',
-                'java': 'java',
-                'javascript': 'javascript',
-                'typescript': 'typescript',
-                'cpp': 'cpp',
-                'c': 'c'
-            }
-            
-            # 각 언어별 파서 초기화
-            self.parsers = {}
-            for lang_name in languages.values():
-                try:
-                    parser = get_parser(lang_name)
-                    if parser:
-                        self.parsers[lang_name] = parser
-                        logger.info(f"Tree-sitter {lang_name} 파서 초기화 완료")
-                    else:
-                        logger.warning(f"Tree-sitter {lang_name} 파서를 찾을 수 없습니다")
-                except Exception as e:
-                    logger.error(f"Tree-sitter {lang_name} 파서 초기화 실패: {e}")
-                    
-        except Exception as e:
-            logger.error(f"Tree-sitter 초기화 실패: {e}")
-            
+        """Tree-sitter 초기화 (현재는 대체 코드 분석기 사용)"""
+        logger.info("Tree-sitter 대신 대체 코드 분석기 사용")
+        self.languages = {}
+        self.use_alternative_analyzer = True
+        
     def _get_file_language(self, file_path: str) -> str:
         """파일 타입에 따른 언어 반환"""
         ext = os.path.splitext(file_path)[1].lower()
@@ -329,69 +307,20 @@ class CodeAnalyzer:
             logger.warning(f"{method} 분석 실패({file_path}): {e}")
         return None
         
-    async def analyze_file(self, file_path: str, language: Optional[str] = None) -> AnalysisResult:
+    async def analyze_file(self, file_path: str) -> Dict[str, Any]:
         """파일 분석"""
-        # 파일별 락을 사용하여 동시 분석 방지
-        async with self._get_file_lock(file_path):
-            # 캐시된 결과 확인
-            cached_result = await self._get_cached_result(file_path)
-            if cached_result:
-                return cached_result
-                
-            # 파일 존재 및 접근 권한 확인
+        try:
             if not os.path.exists(file_path):
-                return self._create_error_result(f'File not found: {file_path}')
-            if not os.access(file_path, os.R_OK):
-                return self._create_error_result(f'Permission denied: {file_path}')
-                
-            # 지원되는 파일인지 확인
-            if not self._is_supported_file(file_path):
-                return self._create_error_result(f'Unsupported file type: {file_path}')
-                
-            # 파일 크기 확인
-            try:
-                file_size = os.path.getsize(file_path)
-                if file_size == 0:
-                    return self._create_error_result(f'Empty file: {file_path}')
-                if file_size > self._max_file_size:
-                    return self._create_error_result(f'File too large: {file_path}')
-            except Exception as e:
-                return self._create_error_result(f'Error checking file size: {e}')
-                
-            # 언어 설정
-            if not language:
-                language = self._get_file_language(file_path)
-                
-            # 분석 시도
-            analysis_results: List[AnalysisResult] = []
-            analysis_priority = self._get_analysis_priority(file_path)
+                return {'error': f'File not found: {file_path}'}
             
-            for attempt in range(self._retry_count):
-                try:
-                    # 우선순위에 따라 분석 시도
-                    for method in analysis_priority:
-                        result = await self._analyze_with_method(file_path, method, language)
-                        if result and self._validate_analysis_result(result):
-                            analysis_results.append(result)
-                            
-                    # 분석 결과가 있으면 병합하여 반환
-                    if analysis_results:
-                        merged_result = self._merge_analysis_results(analysis_results)
-                        await self._cache_result(file_path, merged_result)
-                        return merged_result
-                        
-                    if attempt < self._retry_count - 1:
-                        await asyncio.sleep(self._retry_delay * (attempt + 1))
-                        continue
-                        
-                    return self._create_error_result('Analysis failed for all supported methods')
-                except Exception as e:
-                    if attempt < self._retry_count - 1:
-                        await asyncio.sleep(self._retry_delay * (attempt + 1))
-                        continue
-                    logger.error(f"파일 분석 실패: {file_path}: {e}")
-                    return self._create_error_result(str(e))
-                    
+            # 대체 코드 분석기 사용
+            analyzer = AlternativeCodeAnalyzer()
+            return analyzer.analyze_file(file_path)
+            
+        except Exception as e:
+            logger.error(f"파일 분석 중 오류 발생: {str(e)}")
+            return {'error': str(e)}
+        
     async def analyze_files(self, files: List[Tuple[str, str]]) -> List[AnalysisResult]:
         """여러 파일 분석 (병렬 처리)"""
         # 작업자 시작
@@ -480,7 +409,7 @@ class CodeAnalyzer:
                 async with self._analysis_semaphore:
                     try:
                         # 파일 분석
-                        result = await self.analyze_file(file_path, language)
+                        result = await self.analyze_file(file_path)
                         
                         # 결과 검증
                         if not self._validate_analysis_result(result):

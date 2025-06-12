@@ -260,9 +260,15 @@ class GraphDatabase:
             
         try:
             from neo4j import GraphDatabase
+            # Docker 환경에서는 neo4j 서비스 이름으로 연결
+            uri = os.getenv('NEO4J_URI', 'bolt://neo4j:7687')
+            user = os.getenv('NEO4J_USER', 'neo4j')
+            password = os.getenv('NEO4J_PASSWORD', 'opencodeai')
+            
+            logger.info(f"Neo4j 연결 시도: {uri}")
             self.driver = GraphDatabase.driver(
-                self.neo4j_uri,
-                auth=(self.neo4j_user, self.neo4j_password)
+                uri,
+                auth=(user, password)
             )
             
             # 연결 테스트

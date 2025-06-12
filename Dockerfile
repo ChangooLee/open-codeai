@@ -15,6 +15,24 @@ RUN apt-get update && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
+# Tree-sitter 빌드 환경 설정
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Tree-sitter CLI 설치 (npm을 통한 설치)
+RUN npm install -g tree-sitter-cli
+
+# Tree-sitter 언어 파일 빌드
+COPY scripts/build_tree_sitter.py /app/scripts/
+RUN chmod +x /app/scripts/build_tree_sitter.py \
+    && mkdir -p /app/build \
+    && python /app/scripts/build_tree_sitter.py
+
 COPY . .
 
 EXPOSE 8800
